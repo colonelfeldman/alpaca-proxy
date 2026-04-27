@@ -1,10 +1,15 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
+// Serve trading agent UI
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Alpaca proxy
 app.all('/alpaca/*', async (req, res) => {
   const url = 'https://paper-api.alpaca.markets/v2/' + req.params[0];
   try {
@@ -14,6 +19,7 @@ app.all('/alpaca/*', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Claude proxy
 app.post('/claude', async (req, res) => {
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -26,4 +32,4 @@ app.post('/claude', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.listen(process.env.PORT || 3001, () => console.log('Proxy running'));
+app.listen(process.env.PORT || 3001, () => console.log('Server running'));
