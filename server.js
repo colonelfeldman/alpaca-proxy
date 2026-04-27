@@ -4,6 +4,7 @@ const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args
 const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
+
 app.all('/alpaca/*', async (req, res) => {
   const url = 'https://paper-api.alpaca.markets/v2/' + req.params[0];
   try {
@@ -12,4 +13,17 @@ app.all('/alpaca/*', async (req, res) => {
     res.status(r.status).json(d);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+
+app.post('/claude', async (req, res) => {
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': req.headers['x-api-key'], 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify(req.body)
+    });
+    const d = await r.json();
+    res.status(r.status).json(d);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.listen(process.env.PORT || 3001, () => console.log('Proxy running'));
