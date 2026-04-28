@@ -92,6 +92,20 @@
   .btn-place-all:disabled { opacity: 0.4; cursor: not-allowed; }
   .info-box { background: var(--blue-dim); border: 1px solid rgba(96,165,250,0.2); border-radius: 8px; padding: 10px 14px; font-size: 12px; color: var(--blue); margin-bottom: 1rem; line-height: 1.7; }
 
+  /* ── Monitor / Position cards ───────────────────────────────────────────── */
+  .pos-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1rem; }
+  .pos-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 1rem; }
+  .pos-symbol { font-family: var(--mono); font-size: 22px; font-weight: 600; }
+  .pos-price-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 1rem; }
+  .pos-price { font-family: var(--mono); font-size: 28px; font-weight: 600; line-height: 1.1; }
+  .pos-entry { font-size: 12px; color: var(--muted); font-family: var(--mono); margin-top: 4px; }
+  .pos-pnl { font-family: var(--mono); font-size: 20px; font-weight: 600; text-align: right; line-height: 1.3; }
+  .pos-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .pos-stat { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .stat-label { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+  .stat-val { font-family: var(--mono); font-size: 16px; font-weight: 500; }
+  .stat-dist { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 3px; }
+
   /* ── Mobile responsive ────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
     html, body { overflow-x: hidden; }
@@ -165,6 +179,7 @@
     <button class="tab active" onclick="showTab('setup')">Setup</button>
     <button class="tab" onclick="showTab('watchlist')">Watchlist</button>
     <button class="tab" onclick="showTab('orders')">Orders</button>
+    <button class="tab" onclick="showTab('monitor')">Monitor</button>
   </div>
 
   <!-- SETUP -->
@@ -247,6 +262,14 @@
     </div>
     <div id="orders-list"><div class="empty">No orders yet</div></div>
   </div>
+
+  <!-- MONITOR -->
+  <div id="tab-monitor" style="display:none;">
+    <div class="row" style="margin-bottom:1rem; margin-top:0;">
+      <button class="btn" onclick="refreshMonitor()">Refresh</button>
+    </div>
+    <div id="monitor-list"><div class="empty">Tap Refresh to load positions</div></div>
+  </div>
 </div>
 
 <script>
@@ -308,11 +331,12 @@ function setMode(m) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function showTab(t) {
-  ['setup','watchlist','orders'].forEach((id,i) => {
+  ['setup','watchlist','orders','monitor'].forEach((id,i) => {
     document.getElementById('tab-'+id).style.display = id===t?'':'none';
     document.querySelectorAll('.tab')[i].classList.toggle('active', id===t);
   });
   if(t==='orders') refreshOrders();
+  if(t==='monitor') refreshMonitor();
 }
 
 function getHeaders() {
@@ -559,6 +583,110 @@ async function cancelAllOrders() {
   if(!confirm('Cancel all open orders?'))return;
   try{await fetch(PROXY+'/alpaca/orders',{method:'DELETE',headers:getHeaders()});setTimeout(refreshOrders,800);}
   catch(e){alert('Error: '+e.message);}
+}
+
+// ── Monitor tab ──────────────────────────────────────────────────────────────
+async function refreshMonitor() {
+  const el = document.getElementById('monitor-list');
+  el.innerHTML = '<div class="empty"><span class="spinner"></span>Loading positions...</div>';
+  try {
+    const [posRes, ordRes] = await Promise.all([
+      fetch(PROXY+'/alpaca/positions', {headers: getHeaders()}),
+      fetch(PROXY+'/alpaca/orders?status=open&limit=200&nested=true', {headers: getHeaders()})
+    ]);
+    if (!posRes.ok) throw new Error('Auth failed — add your API keys in Setup tab');
+    const positions = await posRes.json();
+    const orders = ordRes.ok ? await ordRes.json() : [];
+
+    if (!positions.length) { el.innerHTML = '<div class="empty">No open positions</div>'; return; }
+
+    // Fetch fresh prices
+    const symbols = [...new Set(positions.map(p => p.symbol))].join(',');
+    const snapRes = await fetch(PROXY+'/alpaca/stocks/snapshots?symbols='+encodeURIComponent(symbols), {headers: getHeaders()});
+    const snaps = snapRes.ok ? await snapRes.json() : {};
+
+    // Extract TP and SL prices from open bracket order legs
+    const tpMap = {}, slMap = {};
+    for (const o of orders) {
+      if (!o.legs) continue;
+      const tp = o.legs.find(l => l.type === 'limit' && l.side !== o.side);
+      const sl = o.legs.find(l => l.type === 'stop_limit' || l.type === 'stop');
+      if (tp && !tpMap[o.symbol]) tpMap[o.symbol] = parseFloat(tp.limit_price);
+      if (sl && !slMap[o.symbol]) slMap[o.symbol] = parseFloat(sl.stop_price);
+    }
+
+    const sign = n => n >= 0 ? '+' : '';
+
+    el.innerHTML = positions.map(p => {
+      const isLong = p.side === 'long';
+      const entry = parseFloat(p.avg_entry_price);
+      const qty = Math.abs(parseFloat(p.qty));
+      const snap = snaps[p.symbol];
+      const current = snap
+        ? parseFloat(snap.latestTrade?.p || snap.minuteBar?.c || p.current_price)
+        : parseFloat(p.current_price);
+      const pnl = (current - entry) * qty * (isLong ? 1 : -1);
+      const pnlPct = pnl / (entry * qty) * 100;
+      const pnlColor = pnl >= 0 ? 'var(--accent)' : 'var(--red)';
+
+      const tp = tpMap[p.symbol];
+      const sl = slMap[p.symbol];
+      const tpPct = tp != null ? (tp - current) / current * 100 : null;
+      const slPct = sl != null ? (sl - current) / current * 100 : null;
+
+      // Color TP pct green if price still needs to move in the right direction
+      const tpPctColor = tpPct != null && ((isLong && tpPct > 0) || (!isLong && tpPct < 0))
+        ? 'var(--accent)' : 'var(--muted)';
+      // Color SL pct red if price is dangerously close (within 0.5%) or has blown through
+      const slPctColor = slPct != null && Math.abs(slPct) < 0.5 ? 'var(--red)' : 'var(--muted)';
+
+      return `<div class="pos-card">
+        <div class="pos-header">
+          <span class="pos-symbol">${p.symbol}</span>
+          <span class="badge ${isLong ? 'badge-bull' : 'badge-bear'}">${isLong ? '▲ Long' : '▼ Short'}</span>
+          <span class="badge" style="background:#2a2a35;color:var(--muted);">${qty} sh</span>
+        </div>
+        <div class="pos-price-row">
+          <div>
+            <div class="pos-price">${fmt(current)}</div>
+            <div class="pos-entry">entry ${fmt(entry)}</div>
+          </div>
+          <div class="pos-pnl" style="color:${pnlColor};">
+            <div>${sign(pnl)}${fmt(pnl)}</div>
+            <div style="font-size:14px;">${sign(pnlPct)}${pnlPct.toFixed(2)}%</div>
+          </div>
+        </div>
+        <div class="pos-grid">
+          <div class="pos-stat">
+            <div class="stat-label">Take profit</div>
+            ${tp != null
+              ? `<div class="stat-val" style="color:var(--accent);">${fmt(tp)}</div>
+                 <div class="stat-dist" style="color:${tpPctColor};">${sign(tpPct)}${tpPct.toFixed(2)}%</div>`
+              : '<div class="stat-val" style="color:var(--muted);">—</div>'}
+          </div>
+          <div class="pos-stat">
+            <div class="stat-label">Stop loss</div>
+            ${sl != null
+              ? `<div class="stat-val" style="color:var(--red);">${fmt(sl)}</div>
+                 <div class="stat-dist" style="color:${slPctColor};">${sign(slPct)}${slPct.toFixed(2)}%</div>`
+              : '<div class="stat-val" style="color:var(--muted);">—</div>'}
+          </div>
+        </div>
+        <button class="btn-danger btn" style="width:100%;margin-top:0.75rem;min-height:48px;font-size:15px;" onclick="monitorClose('${p.symbol}')">Close Position</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<div class="msg msg-err">'+e.message+'</div>';
+  }
+}
+
+async function monitorClose(symbol) {
+  if (!confirm('Close position + cancel open legs for '+symbol+'?')) return;
+  try {
+    const r = await fetch(PROXY+'/alpaca/positions/'+symbol, {method:'DELETE', headers:getHeaders()});
+    if (!r.ok) { const d = await r.json(); alert('Error: '+(d.message||JSON.stringify(d))); return; }
+    setTimeout(refreshMonitor, 800);
+  } catch(e) { alert('Error: '+e.message); }
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
