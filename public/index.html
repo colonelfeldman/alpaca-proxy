@@ -444,8 +444,7 @@ async function refreshOrders() {
   const el = document.getElementById('orders-list');
   el.innerHTML='<div class="empty"><span class="spinner"></span>Loading...</div>';
   try {
-    const r = await fetch(PROXY+'/alpaca/orders?status=all&limit=50&nested=true',{headers:getHeaders()});
-    if(!r.ok) throw new Error('Auth failed — add your API keys in Setup tab');
+const r = await fetch(PROXY+'/alpaca/orders?status=all&limit=100&nested=true&after='+new Date(Date.now()-7*24*60*60*1000).toISOString(),{headers:getHeaders()});    if(!r.ok) throw new Error('Auth failed — add your API keys in Setup tab');
     const orders = await r.json();
     if(!orders.length){el.innerHTML='<div class="empty">No orders found</div>';return;}
     el.innerHTML='<div class="card">'+orders.map(o=>{
