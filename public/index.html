@@ -622,8 +622,9 @@ async function refreshMonitor() {
     if (!symbols.length) { el.innerHTML = '<div class="empty">No orders or positions today</div>'; return; }
 
     // Fetch fresh prices for all symbols
-    const snapRes = await fetch(PROXY+'/alpaca/stocks/snapshots?symbols='+encodeURIComponent(symbols.join(',')), {headers: getHeaders()});
+    const snapRes = await fetch(PROXY+'/alpaca-data/stocks/snapshots?symbols='+encodeURIComponent(symbols.join(',')), {headers: getHeaders()});
     const snaps = snapRes.ok ? await snapRes.json() : {};
+    console.log('snap status', snapRes.status, 'snaps', JSON.stringify(snaps).slice(0,300));
 
     // Sort: open positions first, then pending orders, then canceled
     symbols.sort((a, b) => {
@@ -666,6 +667,11 @@ async function refreshMonitor() {
       const tpPctColor = tpPct != null && ((isLong && tpPct > 0) || (!isLong && tpPct < 0)) ? 'var(--accent)' : 'var(--muted)';
       const slPctColor = slPct != null && Math.abs(slPct) < 0.5 ? 'var(--red)' : 'var(--muted)';
 
+      // Detect completed trade: entry filled, exit leg filled, no open position
+      const filledExitLeg = !hasFill && order && order.status === 'filled'
+        ? legs.find(l => l.status === 'filled') : null;
+      const isCompleted = !!filledExitLeg;
+
       // Price / P&L block
       let priceBlock = '';
       if (hasFill) {
@@ -680,11 +686,28 @@ async function refreshMonitor() {
             <div style="font-size:14px;">${sign(pnlPct)}${pnlPct.toFixed(2)}%</div>
           </div>
         </div>`;
+      } else if (isCompleted) {
+        const entry = parseFloat(order.filled_avg_price || 0);
+        const exitPrice = parseFloat(filledExitLeg.filled_avg_price || 0);
+        const filledQty = parseFloat(order.filled_qty || order.qty || 0);
+        const pnl = (order.side === 'buy' ? exitPrice - entry : entry - exitPrice) * filledQty;
+        const pnlPct = entry ? pnl / (entry * filledQty) * 100 : 0;
+        const pnlColor = pnl >= 0 ? 'var(--accent)' : 'var(--red)';
+        const exitLabel = filledExitLeg.type === 'limit' ? 'take-profit' : 'stop-loss';
+        priceBlock = `<div class="pos-price-row">
+          <div><div class="pos-price">${fmt(exitPrice)}</div><div class="pos-entry">entry ${fmt(entry)} · ${exitLabel}</div></div>
+          <div class="pos-pnl" style="color:${pnlColor};">
+            <div>${sign(pnl)}${fmt(pnl)}</div>
+            <div style="font-size:14px;">${sign(pnlPct)}${pnlPct.toFixed(2)}%</div>
+          </div>
+        </div>`;
       } else if (order) {
         const trigger = parseFloat(order.stop_price || order.limit_price || 0);
-        priceBlock = `<div style="margin-bottom:1rem;">
-          <div style="font-family:var(--mono);font-size:17px;">trigger ${trigger ? fmt(trigger) : '—'}</div>
-          <div style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:3px;">current ${current ? fmt(current) : '—'}</div>
+        priceBlock = `<div class="pos-price-row">
+          <div>
+            <div class="pos-price">${current ? fmt(current) : '—'}</div>
+            <div class="pos-entry">${trigger ? 'trigger ' + fmt(trigger) : order.type || ''}</div>
+          </div>
         </div>`;
       }
 
@@ -707,10 +730,11 @@ async function refreshMonitor() {
         ? `<button class="btn-danger btn" style="width:100%;min-height:44px;" onclick="monitorCancelOrder('${order.id}')">Cancel Order</button>`
         : '';
 
-      const statusBadge = hasFill ? 'badge-filled' : isCanceled ? 'badge-canceled' : 'badge-pending';
-      const statusLabel = hasFill ? 'filled' : order ? order.status : '';
+      const statusBadge = hasFill ? 'badge-filled' : isCompleted ? 'badge-filled' : isCanceled ? 'badge-canceled' : 'badge-pending';
+      const statusLabel = hasFill ? 'filled' : isCompleted ? 'closed' : order ? order.status : '';
+      const cardOpacity = isCanceled ? 'opacity:0.45;' : isCompleted ? 'opacity:0.75;' : '';
 
-      return `<div class="pos-card" style="${isCanceled ? 'opacity:0.45;' : ''}">
+      return `<div class="pos-card" style="${cardOpacity}">
         <div class="pos-header">
           <span class="pos-symbol">${symbol}</span>
           <span class="badge ${isLong ? 'badge-bull' : 'badge-bear'}">${isLong ? '▲ Long' : '▼ Short'}</span>

@@ -7,11 +7,23 @@ app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 const ALPACA_BASE = 'https://paper-api.alpaca.markets/v2';
+const ALPACA_DATA_BASE = 'https://data.alpaca.markets/v2';
 const TELEGRAM_TOKEN = '8537812125:AAGQDJEDEp8E9ewfpiBk3kL7hKqCY2dWIyQ';
 const TELEGRAM_CHAT_ID = 586400717;
 
 // Serve trading agent UI
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Alpaca market data proxy (snapshots, bars, quotes)
+app.all('/alpaca-data/*', async (req, res) => {
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const url = ALPACA_DATA_BASE + '/' + req.params[0] + qs;
+  try {
+    const r = await fetch(url, { method: req.method, headers: { 'APCA-API-KEY-ID': req.headers['apca-api-key-id'], 'APCA-API-SECRET-KEY': req.headers['apca-api-secret-key'], 'Content-Type': 'application/json' } });
+    const d = await r.json();
+    res.status(r.status).json(d);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // Alpaca proxy
 app.all('/alpaca/*', async (req, res) => {
@@ -65,11 +77,15 @@ function buildTradeMessage(order) {
 }
 
 async function sendTelegram(text) {
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+  const r = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text })
   });
+  if (!r.ok) {
+    const body = await r.text();
+    throw new Error(`Telegram API ${r.status}: ${body}`);
+  }
 }
 
 async function sendTradeNotification(order) {
@@ -80,6 +96,21 @@ async function sendTradeNotification(order) {
 // --- Filled-order polling (every 30s) ---
 
 const seenOrderIds = new Set();
+
+async function seedSeenOrders() {
+  const key = process.env.ALPACA_KEY;
+  const secret = process.env.ALPACA_SECRET;
+  if (!key || !secret) return;
+  try {
+    const r = await fetch(`${ALPACA_BASE}/orders?status=filled&limit=50`, {
+      headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret }
+    });
+    if (!r.ok) return;
+    const orders = await r.json();
+    for (const order of orders) seenOrderIds.add(order.id);
+    console.log(`Seeded ${seenOrderIds.size} existing filled orders (no notifications)`);
+  } catch (e) { console.error('Seed error:', e.message); }
+}
 
 async function pollFilledOrders() {
   const key = process.env.ALPACA_KEY;
@@ -162,8 +193,8 @@ setInterval(() => {
   }
 }, 60_000);
 
-app.listen(process.env.PORT || 3001, () => {
+app.listen(process.env.PORT || 3001, async () => {
   console.log('Server running');
-  pollFilledOrders();
+  await seedSeenOrders();
   setInterval(pollFilledOrders, 30_000);
 });
