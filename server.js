@@ -45,7 +45,14 @@ app.post('/webhook/alpaca', async (req, res) => {
   await sendTradeNotification(order);
 });
 
-// --- Filled-order polling ---
+// --- Shared helpers ---
+
+function classifyOrder(order) {
+  if (order.order_class === 'bracket') return 'entry';
+  if (order.order_type === 'stop' || order.order_type === 'stop_limit') return 'stop-loss';
+  if (order.order_type === 'limit') return 'take-profit';
+  return 'entry';
+}
 
 function buildTradeMessage(order) {
   const symbol = order.symbol || '?';
@@ -53,11 +60,7 @@ function buildTradeMessage(order) {
   const qty = order.filled_qty || order.qty || '?';
   const price = parseFloat(order.filled_avg_price || 0).toFixed(2);
   const time = order.filled_at ? new Date(order.filled_at).toLocaleString() : new Date().toLocaleString();
-
-  let type = 'entry';
-  if (order.order_type === 'stop' || order.order_type === 'stop_limit') type = 'stop-loss';
-  else if ((order.side || '').toLowerCase() === 'sell' && order.order_type === 'limit') type = 'take-profit';
-
+  const type = classifyOrder(order);
   return `✅ ${symbol} filled - ${side} ${qty} shares @ $${price}\nType: ${type}\nTime: ${time}`;
 }
 
@@ -70,20 +73,18 @@ async function sendTelegram(text) {
 }
 
 async function sendTradeNotification(order) {
-  try {
-    await sendTelegram(buildTradeMessage(order));
-  } catch (e) { console.error('Telegram error:', e.message); }
+  try { await sendTelegram(buildTradeMessage(order)); }
+  catch (e) { console.error('Telegram error:', e.message); }
 }
+
+// --- Filled-order polling (every 30s) ---
 
 const seenOrderIds = new Set();
 
 async function pollFilledOrders() {
   const key = process.env.ALPACA_KEY;
   const secret = process.env.ALPACA_SECRET;
-  if (!key || !secret) {
-    console.warn('ALPACA_KEY / ALPACA_SECRET not set — skipping poll');
-    return;
-  }
+  if (!key || !secret) { console.warn('ALPACA_KEY / ALPACA_SECRET not set — skipping poll'); return; }
 
   try {
     const r = await fetch(`${ALPACA_BASE}/orders?status=filled&limit=50`, {
@@ -91,7 +92,6 @@ async function pollFilledOrders() {
     });
     if (!r.ok) { console.error('Alpaca poll error:', r.status); return; }
     const orders = await r.json();
-
     for (const order of orders) {
       if (seenOrderIds.has(order.id)) continue;
       seenOrderIds.add(order.id);
@@ -99,6 +99,68 @@ async function pollFilledOrders() {
     }
   } catch (e) { console.error('Poll error:', e.message); }
 }
+
+// --- Daily summary at 21:00 UTC (4pm ET) ---
+
+let lastSummaryDate = null;
+
+async function sendDailySummary() {
+  const key = process.env.ALPACA_KEY;
+  const secret = process.env.ALPACA_SECRET;
+  if (!key || !secret) return;
+
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+
+  try {
+    const r = await fetch(
+      `${ALPACA_BASE}/orders?status=all&limit=200&after=${todayStart.toISOString()}&nested=true`,
+      { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } }
+    );
+    if (!r.ok) { console.error('Daily summary fetch error:', r.status); return; }
+    const orders = await r.json();
+
+    // Only completed bracket trades (entry filled, one leg filled)
+    const brackets = orders.filter(o => o.order_class === 'bracket' && o.status === 'filled');
+    let winners = 0, losers = 0, totalPnl = 0, openTrades = 0;
+
+    for (const entry of brackets) {
+      const entryPrice = parseFloat(entry.filled_avg_price || 0);
+      const qty = parseFloat(entry.filled_qty || entry.qty || 0);
+      const filledLeg = (entry.legs || []).find(l => l.status === 'filled');
+
+      if (!filledLeg) { openTrades++; continue; }
+
+      const exitPrice = parseFloat(filledLeg.filled_avg_price || 0);
+      const pnl = entry.side === 'buy'
+        ? (exitPrice - entryPrice) * qty
+        : (entryPrice - exitPrice) * qty;
+
+      totalPnl += pnl;
+      filledLeg.order_type === 'limit' ? winners++ : losers++;
+    }
+
+    const closed = winners + losers;
+    const date = new Date().toLocaleDateString('en-US', {
+      timeZone: 'America/New_York', weekday: 'long', month: 'short', day: 'numeric'
+    });
+    const sign = totalPnl >= 0 ? '+' : '';
+    const openNote = openTrades > 0 ? `\nStill open: ${openTrades}` : '';
+    const text = `📊 Daily Summary — ${date}\nTrades closed: ${closed}${openNote}\nWinners ✅: ${winners}  Losers ❌: ${losers}\nNet P&L: ${sign}$${totalPnl.toFixed(2)}`;
+
+    await sendTelegram(text);
+    console.log('Daily summary sent');
+  } catch (e) { console.error('Daily summary error:', e.message); }
+}
+
+setInterval(() => {
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 10);
+  if (now.getUTCHours() === 21 && now.getUTCMinutes() === 0 && lastSummaryDate !== dateStr) {
+    lastSummaryDate = dateStr;
+    sendDailySummary();
+  }
+}, 60_000);
 
 app.listen(process.env.PORT || 3001, () => {
   console.log('Server running');

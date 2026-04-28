@@ -126,15 +126,15 @@
       <div class="label">Order settings</div>
       <div class="settings-row">
         <div>
-          <div class="label">Shares per trade</div>
-          <input type="number" id="sharesQty" value="100" min="1" />
+          <div class="label">Max dollars per trade</div>
+          <input type="number" id="maxDollars" value="10000" min="1" />
         </div>
         <div>
           <div class="label">Stop loss % from trigger</div>
           <input type="number" id="stopLossPct" value="3" min="0.1" max="20" step="0.1" />
         </div>
       </div>
-      <p class="note">At 3%, a $85 bull trigger gets a stop loss at $82.45. Bear orders get stop loss above trigger.</p>
+      <p class="note">Shares = Math.floor(maxDollars / trigger price). At $10,000 max and an $85 trigger that's 117 shares. Stop loss at 3% below trigger for bulls, above for bears.</p>
     </div>
     <div class="metrics" id="acct-metrics" style="display:none;">
       <div class="metric"><div class="label">Portfolio value</div><div class="val" id="m-equity">—</div></div>
@@ -197,7 +197,7 @@ let mode = 'manual'; // 'manual' or 'auto'
 function saveKeys() {
   localStorage.setItem('alpaca_key', document.getElementById('apiKey').value.trim());
   localStorage.setItem('alpaca_secret', document.getElementById('secretKey').value.trim());
-  localStorage.setItem('alpaca_shares', document.getElementById('sharesQty').value);
+  localStorage.setItem('alpaca_dollars', document.getElementById('maxDollars').value);
   localStorage.setItem('alpaca_sl_pct', document.getElementById('stopLossPct').value);
   document.getElementById('keys-saved-badge').textContent = '✓ saved';
   document.getElementById('conn-msg').innerHTML = '<div class="msg msg-ok">Keys saved to browser</div>';
@@ -206,11 +206,11 @@ function saveKeys() {
 function loadKeys() {
   const k = localStorage.getItem('alpaca_key');
   const s = localStorage.getItem('alpaca_secret');
-  const qty = localStorage.getItem('alpaca_shares');
+  const dollars = localStorage.getItem('alpaca_dollars');
   const sl = localStorage.getItem('alpaca_sl_pct');
   if(k) document.getElementById('apiKey').value = k;
   if(s) document.getElementById('secretKey').value = s;
-  if(qty) document.getElementById('sharesQty').value = qty;
+  if(dollars) document.getElementById('maxDollars').value = dollars;
   if(sl) document.getElementById('stopLossPct').value = sl;
   if(k && s) document.getElementById('keys-saved-badge').textContent = '✓ saved';
 }
@@ -218,10 +218,11 @@ function loadKeys() {
 function clearKeys() {
   localStorage.removeItem('alpaca_key');
   localStorage.removeItem('alpaca_secret');
-  localStorage.removeItem('alpaca_shares');
+  localStorage.removeItem('alpaca_dollars');
   localStorage.removeItem('alpaca_sl_pct');
   document.getElementById('apiKey').value = '';
   document.getElementById('secretKey').value = '';
+  document.getElementById('maxDollars').value = '10000';
   document.getElementById('keys-saved-badge').textContent = '';
   document.getElementById('conn-msg').innerHTML = '<div class="msg msg-info">Saved keys cleared</div>';
 }
@@ -373,7 +374,7 @@ function removeSetup(i) { parsedSetups.splice(i,1); renderSetups(); }
 
 // ── Order placement ──────────────────────────────────────────────────────────
 async function submitBracket(s) {
-  const qty = parseInt(document.getElementById('sharesQty').value)||1;
+  const qty = Math.max(1, Math.floor(parseFloat(document.getElementById('maxDollars').value) / s.trigger));
   const side = s.direction==='bull' ? 'buy' : 'sell';
   const sl = calcStopLoss(s.trigger, s.direction);
   const tp = s.targets[0];
@@ -470,8 +471,9 @@ async function refreshOrders() {
             ${sl?'<br/><span style="color:#f87171;">stop-loss: $'+parseFloat(sl.stop_price||0).toFixed(2)+'</span>':''}
           </div>
         </div>
-        <div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
           ${o.status==='new'||o.status==='accepted'||o.status==='held'?`<button class="btn-danger btn btn-sm" onclick="cancelOrder('${o.id}')">Cancel</button>`:''}
+          ${o.status==='filled'&&o.order_class==='bracket'?`<button class="btn-danger btn btn-sm" onclick="closePosition('${o.symbol}')">Close</button>`:''}
         </div>
       </div>`;
     }).join('')+'</div>';
@@ -481,6 +483,15 @@ async function refreshOrders() {
 async function cancelOrder(id) {
   try{await fetch(PROXY+'/alpaca/orders/'+id,{method:'DELETE',headers:getHeaders()});refreshOrders();}
   catch(e){alert('Cancel failed: '+e.message);}
+}
+
+async function closePosition(symbol) {
+  if(!confirm('Close position + cancel open legs for '+symbol+'?')) return;
+  try {
+    const r = await fetch(PROXY+'/alpaca/positions/'+symbol, {method:'DELETE', headers:getHeaders()});
+    if(!r.ok) { const d = await r.json(); alert('Error: '+(d.message||JSON.stringify(d))); return; }
+    setTimeout(refreshOrders, 800);
+  } catch(e) { alert('Error: '+e.message); }
 }
 
 async function cancelAllOrders() {
