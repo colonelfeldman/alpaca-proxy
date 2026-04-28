@@ -131,10 +131,10 @@
         </div>
         <div>
           <div class="label">Stop loss % from trigger</div>
-          <input type="number" id="stopLossPct" value="2" min="0.1" max="20" step="0.1" />
+          <input type="number" id="stopLossPct" value="3" min="0.1" max="20" step="0.1" />
         </div>
       </div>
-      <p class="note">At 2%, a $85 bull trigger gets a stop loss at $83.30. Bear orders get stop loss above trigger.</p>
+      <p class="note">At 3%, a $85 bull trigger gets a stop loss at $82.45. Bear orders get stop loss above trigger.</p>
     </div>
     <div class="metrics" id="acct-metrics" style="display:none;">
       <div class="metric"><div class="label">Portfolio value</div><div class="val" id="m-equity">—</div></div>
@@ -382,7 +382,7 @@ async function submitBracket(s) {
     type: 'stop_limit',
     stop_price: s.trigger,
     limit_price: s.trigger,
-    time_in_force: 'gtc',
+    time_in_force: 'day',
     order_class: 'bracket',
     take_profit: { limit_price: tp },
     stop_loss: {

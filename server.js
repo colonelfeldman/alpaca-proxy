@@ -11,7 +11,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Alpaca proxy
 app.all('/alpaca/*', async (req, res) => {
-  const url = 'https://paper-api.alpaca.markets/v2/' + req.params[0];
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const url = 'https://paper-api.alpaca.markets/v2/' + req.params[0] + qs;
   try {
     const r = await fetch(url, { method: req.method, headers: { 'APCA-API-KEY-ID': req.headers['apca-api-key-id'], 'APCA-API-SECRET-KEY': req.headers['apca-api-secret-key'], 'Content-Type': 'application/json' }, body: req.method !== 'GET' && req.method !== 'DELETE' ? JSON.stringify(req.body) : undefined });
     const d = await r.json();
