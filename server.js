@@ -33,4 +33,31 @@ app.post('/claude', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Alpaca trade webhook
+app.post('/webhook/alpaca', async (req, res) => {
+  res.sendStatus(200);
+  const order = req.body?.data?.order || req.body?.order || req.body;
+  if (!order || order.status !== 'filled') return;
+
+  const symbol = order.symbol || '?';
+  const side = (order.side || '').toUpperCase();
+  const qty = order.filled_qty || order.qty || '?';
+  const price = parseFloat(order.filled_avg_price || 0).toFixed(2);
+  const time = order.filled_at ? new Date(order.filled_at).toLocaleString() : new Date().toLocaleString();
+
+  let type = 'entry';
+  if (order.order_type === 'stop' || order.order_type === 'stop_limit') type = 'stop-loss';
+  else if (side === 'SELL' && order.order_type === 'limit') type = 'take-profit';
+
+  const text = `✅ ${symbol} filled - ${side} ${qty} shares @ $${price}\nType: ${type}\nTime: ${time}`;
+
+  try {
+    await fetch(`https://api.telegram.org/bot8537812125:AAGQDJEDEp8E9ewfpiBk3kL7hKqCY2dWIyQ/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: 586400717, text })
+    });
+  } catch (e) { console.error('Telegram error:', e.message); }
+});
+
 app.listen(process.env.PORT || 3001, () => console.log('Server running'));
