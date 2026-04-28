@@ -588,91 +588,136 @@ async function cancelAllOrders() {
 // ── Monitor tab ──────────────────────────────────────────────────────────────
 async function refreshMonitor() {
   const el = document.getElementById('monitor-list');
-  el.innerHTML = '<div class="empty"><span class="spinner"></span>Loading positions...</div>';
+  el.innerHTML = '<div class="empty"><span class="spinner"></span>Loading...</div>';
   try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
     const [posRes, ordRes] = await Promise.all([
       fetch(PROXY+'/alpaca/positions', {headers: getHeaders()}),
-      fetch(PROXY+'/alpaca/orders?status=open&limit=200&nested=true', {headers: getHeaders()})
+      fetch(PROXY+'/alpaca/orders?status=all&limit=200&nested=true&direction=desc&after='+encodeURIComponent(todayStart.toISOString()), {headers: getHeaders()})
     ]);
     if (!posRes.ok) throw new Error('Auth failed — add your API keys in Setup tab');
     const positions = await posRes.json();
-    const orders = ordRes.ok ? await ordRes.json() : [];
+    const allOrders = ordRes.ok ? await ordRes.json() : [];
 
-    if (!positions.length) { el.innerHTML = '<div class="empty">No open positions</div>'; return; }
+    // Maps: symbol → position, symbol → [orders]
+    const posMap = {};
+    for (const p of positions) posMap[p.symbol] = p;
 
-    // Fetch fresh prices
-    const symbols = [...new Set(positions.map(p => p.symbol))].join(',');
-    const snapRes = await fetch(PROXY+'/alpaca/stocks/snapshots?symbols='+encodeURIComponent(symbols), {headers: getHeaders()});
-    const snaps = snapRes.ok ? await snapRes.json() : {};
-
-    // Extract TP and SL prices from open bracket order legs
-    const tpMap = {}, slMap = {};
-    for (const o of orders) {
-      if (!o.legs) continue;
-      const tp = o.legs.find(l => l.type === 'limit' && l.side !== o.side);
-      const sl = o.legs.find(l => l.type === 'stop_limit' || l.type === 'stop');
-      if (tp && !tpMap[o.symbol]) tpMap[o.symbol] = parseFloat(tp.limit_price);
-      if (sl && !slMap[o.symbol]) slMap[o.symbol] = parseFloat(sl.stop_price);
+    const seen = new Set();
+    const bySymbol = {};
+    for (const o of allOrders) {
+      if (seen.has(o.id)) continue;
+      seen.add(o.id);
+      if (!bySymbol[o.symbol]) bySymbol[o.symbol] = [];
+      bySymbol[o.symbol].push(o);
+    }
+    // Include any positions that have no today's orders (carried over)
+    for (const sym of Object.keys(posMap)) {
+      if (!bySymbol[sym]) bySymbol[sym] = [];
     }
 
+    const symbols = Object.keys(bySymbol);
+    if (!symbols.length) { el.innerHTML = '<div class="empty">No orders or positions today</div>'; return; }
+
+    // Fetch fresh prices for all symbols
+    const snapRes = await fetch(PROXY+'/alpaca/stocks/snapshots?symbols='+encodeURIComponent(symbols.join(',')), {headers: getHeaders()});
+    const snaps = snapRes.ok ? await snapRes.json() : {};
+
+    // Sort: open positions first, then pending orders, then canceled
+    symbols.sort((a, b) => {
+      const rank = s => posMap[s] ? 0
+        : bySymbol[s].some(o => ['new','accepted','held','partially_filled'].includes(o.status)) ? 1 : 2;
+      return rank(a) - rank(b);
+    });
+
     const sign = n => n >= 0 ? '+' : '';
+    const OPEN = ['new','accepted','held','partially_filled'];
 
-    el.innerHTML = positions.map(p => {
-      const isLong = p.side === 'long';
-      const entry = parseFloat(p.avg_entry_price);
-      const qty = Math.abs(parseFloat(p.qty));
-      const snap = snaps[p.symbol];
+    el.innerHTML = symbols.map(symbol => {
+      const pos = posMap[symbol];
+      const orders = bySymbol[symbol];
+      const snap = snaps[symbol];
       const current = snap
-        ? parseFloat(snap.latestTrade?.p || snap.minuteBar?.c || p.current_price)
-        : parseFloat(p.current_price);
-      const pnl = (current - entry) * qty * (isLong ? 1 : -1);
-      const pnlPct = pnl / (entry * qty) * 100;
-      const pnlColor = pnl >= 0 ? 'var(--accent)' : 'var(--red)';
+        ? parseFloat(snap.latestTrade?.p || snap.minuteBar?.c || (pos && pos.current_price) || 0)
+        : parseFloat((pos && pos.current_price) || 0);
 
-      const tp = tpMap[p.symbol];
-      const sl = slMap[p.symbol];
-      const tpPct = tp != null ? (tp - current) / current * 100 : null;
-      const slPct = sl != null ? (sl - current) / current * 100 : null;
+      // Most relevant order for this symbol
+      const order = orders.find(o => o.status === 'filled')
+        || orders.find(o => OPEN.includes(o.status))
+        || orders[0];
 
-      // Color TP pct green if price still needs to move in the right direction
-      const tpPctColor = tpPct != null && ((isLong && tpPct > 0) || (!isLong && tpPct < 0))
-        ? 'var(--accent)' : 'var(--muted)';
-      // Color SL pct red if price is dangerously close (within 0.5%) or has blown through
+      const hasFill = !!pos;
+      const isPending = !hasFill && order && OPEN.includes(order.status);
+      const isCanceled = !hasFill && (!order || ['canceled','expired'].includes(order.status));
+
+      const isLong = pos ? pos.side === 'long' : order ? order.side === 'buy' : true;
+      const qty = pos ? Math.abs(parseFloat(pos.qty)) : order ? Math.abs(parseFloat(order.qty || 0)) : 0;
+
+      // TP/SL from bracket legs (works for both filled and pending parent orders)
+      const legs = (order && order.legs) || [];
+      const tpLeg = legs.find(l => l.type === 'limit' && l.side !== (order && order.side));
+      const slLeg = legs.find(l => l.type === 'stop_limit' || l.type === 'stop');
+      const tp = tpLeg ? parseFloat(tpLeg.limit_price) : null;
+      const sl = slLeg ? parseFloat(slLeg.stop_price) : null;
+      const tpPct = (tp && current) ? (tp - current) / current * 100 : null;
+      const slPct = (sl && current) ? (sl - current) / current * 100 : null;
+      const tpPctColor = tpPct != null && ((isLong && tpPct > 0) || (!isLong && tpPct < 0)) ? 'var(--accent)' : 'var(--muted)';
       const slPctColor = slPct != null && Math.abs(slPct) < 0.5 ? 'var(--red)' : 'var(--muted)';
 
-      return `<div class="pos-card">
-        <div class="pos-header">
-          <span class="pos-symbol">${p.symbol}</span>
-          <span class="badge ${isLong ? 'badge-bull' : 'badge-bear'}">${isLong ? '▲ Long' : '▼ Short'}</span>
-          <span class="badge" style="background:#2a2a35;color:var(--muted);">${qty} sh</span>
-        </div>
-        <div class="pos-price-row">
-          <div>
-            <div class="pos-price">${fmt(current)}</div>
-            <div class="pos-entry">entry ${fmt(entry)}</div>
-          </div>
+      // Price / P&L block
+      let priceBlock = '';
+      if (hasFill) {
+        const entry = parseFloat(pos.avg_entry_price);
+        const pnl = (current - entry) * parseFloat(pos.qty) * (pos.side === 'long' ? 1 : -1);
+        const pnlPct = pnl / (entry * Math.abs(parseFloat(pos.qty))) * 100;
+        const pnlColor = pnl >= 0 ? 'var(--accent)' : 'var(--red)';
+        priceBlock = `<div class="pos-price-row">
+          <div><div class="pos-price">${fmt(current)}</div><div class="pos-entry">entry ${fmt(entry)}</div></div>
           <div class="pos-pnl" style="color:${pnlColor};">
             <div>${sign(pnl)}${fmt(pnl)}</div>
             <div style="font-size:14px;">${sign(pnlPct)}${pnlPct.toFixed(2)}%</div>
           </div>
+        </div>`;
+      } else if (order) {
+        const trigger = parseFloat(order.stop_price || order.limit_price || 0);
+        priceBlock = `<div style="margin-bottom:1rem;">
+          <div style="font-family:var(--mono);font-size:17px;">trigger ${trigger ? fmt(trigger) : '—'}</div>
+          <div style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:3px;">current ${current ? fmt(current) : '—'}</div>
+        </div>`;
+      }
+
+      // TP/SL grid (shown for both filled and pending — levels are already set)
+      const tpSlBlock = (tp != null || sl != null) ? `<div class="pos-grid" style="margin-bottom:0.75rem;">
+        <div class="pos-stat">
+          <div class="stat-label">Take profit</div>
+          ${tp != null ? `<div class="stat-val" style="color:var(--accent);">${fmt(tp)}</div>${tpPct!=null?`<div class="stat-dist" style="color:${tpPctColor};">${sign(tpPct)}${tpPct.toFixed(2)}%</div>`:''}` : '<div class="stat-val" style="color:var(--muted);">—</div>'}
         </div>
-        <div class="pos-grid">
-          <div class="pos-stat">
-            <div class="stat-label">Take profit</div>
-            ${tp != null
-              ? `<div class="stat-val" style="color:var(--accent);">${fmt(tp)}</div>
-                 <div class="stat-dist" style="color:${tpPctColor};">${sign(tpPct)}${tpPct.toFixed(2)}%</div>`
-              : '<div class="stat-val" style="color:var(--muted);">—</div>'}
-          </div>
-          <div class="pos-stat">
-            <div class="stat-label">Stop loss</div>
-            ${sl != null
-              ? `<div class="stat-val" style="color:var(--red);">${fmt(sl)}</div>
-                 <div class="stat-dist" style="color:${slPctColor};">${sign(slPct)}${slPct.toFixed(2)}%</div>`
-              : '<div class="stat-val" style="color:var(--muted);">—</div>'}
-          </div>
+        <div class="pos-stat">
+          <div class="stat-label">Stop loss</div>
+          ${sl != null ? `<div class="stat-val" style="color:var(--red);">${fmt(sl)}</div>${slPct!=null?`<div class="stat-dist" style="color:${slPctColor};">${sign(slPct)}${slPct.toFixed(2)}%</div>`:''}` : '<div class="stat-val" style="color:var(--muted);">—</div>'}
         </div>
-        <button class="btn-danger btn" style="width:100%;margin-top:0.75rem;min-height:48px;font-size:15px;" onclick="monitorClose('${p.symbol}')">Close Position</button>
+      </div>` : '';
+
+      // Action button
+      const actionBlock = hasFill
+        ? `<button class="btn-danger btn" style="width:100%;min-height:48px;font-size:15px;" onclick="monitorClose('${symbol}')">Close Position</button>`
+        : isPending && order
+        ? `<button class="btn-danger btn" style="width:100%;min-height:44px;" onclick="monitorCancelOrder('${order.id}')">Cancel Order</button>`
+        : '';
+
+      const statusBadge = hasFill ? 'badge-filled' : isCanceled ? 'badge-canceled' : 'badge-pending';
+      const statusLabel = hasFill ? 'filled' : order ? order.status : '';
+
+      return `<div class="pos-card" style="${isCanceled ? 'opacity:0.45;' : ''}">
+        <div class="pos-header">
+          <span class="pos-symbol">${symbol}</span>
+          <span class="badge ${isLong ? 'badge-bull' : 'badge-bear'}">${isLong ? '▲ Long' : '▼ Short'}</span>
+          ${qty ? `<span class="badge" style="background:#2a2a35;color:var(--muted);">${qty} sh</span>` : ''}
+          <span class="badge ${statusBadge}">${statusLabel}</span>
+        </div>
+        ${priceBlock}${tpSlBlock}${actionBlock}
       </div>`;
     }).join('');
   } catch(e) {
@@ -687,6 +732,13 @@ async function monitorClose(symbol) {
     if (!r.ok) { const d = await r.json(); alert('Error: '+(d.message||JSON.stringify(d))); return; }
     setTimeout(refreshMonitor, 800);
   } catch(e) { alert('Error: '+e.message); }
+}
+
+async function monitorCancelOrder(id) {
+  try {
+    await fetch(PROXY+'/alpaca/orders/'+id, {method:'DELETE', headers:getHeaders()});
+    refreshMonitor();
+  } catch(e) { alert('Cancel failed: '+e.message); }
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
