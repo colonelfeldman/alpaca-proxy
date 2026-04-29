@@ -197,7 +197,9 @@ async function runChatroomMonitor(targetDate) {
   console.log(`Chatroom monitor starting for ${targetDate}`);
 
   return new Promise((resolve) => {
-    const ws = new WebSocket('wss://chat5.protradingroom.com/?id=61cb5b432fcdee7bc8e97935&sl=1');
+    const ws = new WebSocket('wss://chat5.protradingroom.com/?id=61cb5b432fcdee7bc8e97935&sl=1', {
+      headers: { 'Origin': 'https://chat5.protradingroom.com' }
+    });
     const collectedAlerts = [];
     let settled = false;
 
