@@ -9,7 +9,7 @@ app.use(express.json());
 const ALPACA_BASE = 'https://paper-api.alpaca.markets/v2';
 const ALPACA_DATA_BASE = 'https://data.alpaca.markets/v2';
 const TELEGRAM_TOKEN = '8537812125:AAGQDJEDEp8E9ewfpiBk3kL7hKqCY2dWIyQ';
-const TELEGRAM_CHAT_ID = 586400717;
+const TELEGRAM_CHAT_ID = 8018343254;
 
 // Serve trading agent UI
 app.use(express.static(path.join(__dirname, 'public')));
@@ -47,6 +47,65 @@ app.post('/claude', async (req, res) => {
     const d = await r.json();
     res.status(r.status).json(d);
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Inbound trade endpoint — called by Chrome extension with a parsed setup
+// Body: { symbol, direction: 'bull'|'bear', trigger, targets: [price,...], maxDollars?, stopLossPct? }
+// Requires header: x-webhook-secret matching WEBHOOK_SECRET env var
+app.post('/trade', async (req, res) => {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret && req.headers['x-webhook-secret'] !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { symbol, direction, trigger, targets, maxDollars, stopLossPct } = req.body;
+  if (!symbol || !direction || !trigger || !targets?.length) {
+    return res.status(400).json({ error: 'Missing required fields: symbol, direction, trigger, targets' });
+  }
+
+  const key = process.env.ALPACA_KEY;
+  const secret_key = process.env.ALPACA_SECRET;
+  if (!key || !secret_key) {
+    return res.status(500).json({ error: 'ALPACA_KEY / ALPACA_SECRET not set on server' });
+  }
+
+  const dollars = parseFloat(maxDollars) || 10000;
+  const slPct = parseFloat(stopLossPct) / 100 || 0.03;
+  const qty = Math.max(1, Math.floor(dollars / trigger));
+  const side = direction === 'bull' ? 'buy' : 'sell';
+  const sl = direction === 'bull'
+    ? Math.round(trigger * (1 - slPct) * 100) / 100
+    : Math.round(trigger * (1 + slPct) * 100) / 100;
+  const tp = targets[0];
+
+  const order = {
+    symbol: symbol.toUpperCase(), qty, side,
+    type: 'stop_limit',
+    stop_price: trigger,
+    limit_price: trigger,
+    time_in_force: 'day',
+    order_class: 'bracket',
+    take_profit: { limit_price: tp },
+    stop_loss: {
+      stop_price: sl,
+      limit_price: Math.round(sl * (direction === 'bull' ? 0.995 : 1.005) * 100) / 100
+    }
+  };
+
+  try {
+    const r = await fetch(`${ALPACA_BASE}/orders`, {
+      method: 'POST',
+      headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret_key, 'Content-Type': 'application/json' },
+      body: JSON.stringify(order)
+    });
+    const d = await r.json();
+    if (!r.ok) return res.status(r.status).json({ error: d.message || JSON.stringify(d) });
+    console.log(`Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
+    await sendTelegram(`🟢 Order placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nTP $${tp} · SL $${sl}`);
+    res.json({ ok: true, order: d });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Alpaca trade webhook (kept for compatibility)
