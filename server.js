@@ -99,7 +99,12 @@ app.post('/trade', async (req, res) => {
       body: JSON.stringify(order)
     });
     const d = await r.json();
-    if (!r.ok) return res.status(r.status).json({ error: d.message || JSON.stringify(d) });
+    if (!r.ok) {
+      const reason = d.message || JSON.stringify(d);
+      console.error(`Trade rejected: ${side} ${symbol} — ${reason}`);
+      await sendTelegram(`🔴 Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
+      return res.status(r.status).json({ error: reason });
+    }
     console.log(`Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
     await sendTelegram(`🟢 Order placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nTP $${tp} · SL $${sl}`);
     res.json({ ok: true, order: d });
