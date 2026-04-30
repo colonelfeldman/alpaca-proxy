@@ -14,18 +14,49 @@ const TELEGRAM_CHAT_ID = 8018343254;
 // Serve trading agent UI
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Alpaca market data proxy (snapshots, bars, quotes)
+// Market data proxy — uses server-side bull keys (market data is the same for both accounts)
 app.all('/alpaca-data/*', async (req, res) => {
   const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
   const url = ALPACA_DATA_BASE + '/' + req.params[0] + qs;
+  const key = process.env.ALPACA_KEY;
+  const secret = process.env.ALPACA_SECRET;
+  if (!key || !secret) return res.status(500).json({ error: 'ALPACA_KEY not configured on server' });
   try {
-    const r = await fetch(url, { method: req.method, headers: { 'APCA-API-KEY-ID': req.headers['apca-api-key-id'], 'APCA-API-SECRET-KEY': req.headers['apca-api-secret-key'], 'Content-Type': 'application/json' } });
+    const r = await fetch(url, { method: req.method, headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret, 'Content-Type': 'application/json' } });
     const d = await r.json();
     res.status(r.status).json(d);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Alpaca proxy
+// Bull account proxy — server-side keys, used by UI for orders/positions/account info
+app.all('/alpaca-bull/*', async (req, res) => {
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const url = ALPACA_BASE + '/' + req.params[0] + qs;
+  const key = process.env.ALPACA_KEY;
+  const secret = process.env.ALPACA_SECRET;
+  if (!key || !secret) return res.status(500).json({ error: 'ALPACA_KEY not configured on server' });
+  try {
+    const r = await fetch(url, { method: req.method, headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret, 'Content-Type': 'application/json' }, body: req.method !== 'GET' && req.method !== 'DELETE' ? JSON.stringify(req.body) : undefined });
+    const d = await r.json();
+    res.status(r.status).json(d);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Bear account proxy — server-side keys, used by UI for orders/positions/account info
+app.all('/alpaca-bear/*', async (req, res) => {
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const url = ALPACA_BASE + '/' + req.params[0] + qs;
+  const key = process.env.ALPACA_BEAR_KEY;
+  const secret = process.env.ALPACA_BEAR_SECRET;
+  if (!key || !secret) return res.status(500).json({ error: 'ALPACA_BEAR_KEY not configured on server' });
+  try {
+    const r = await fetch(url, { method: req.method, headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret, 'Content-Type': 'application/json' }, body: req.method !== 'GET' && req.method !== 'DELETE' ? JSON.stringify(req.body) : undefined });
+    const d = await r.json();
+    res.status(r.status).json(d);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Legacy browser-key proxy — kept so old bookmarks / Chrome extension still work
 app.all('/alpaca/*', async (req, res) => {
   const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
   const url = ALPACA_BASE + '/' + req.params[0] + qs;
@@ -49,10 +80,8 @@ app.post('/claude', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Inbound trade endpoint — called by Chrome extension with a parsed setup
-// Body: { symbol, direction: 'bull'|'bear', trigger, targets: [price,...], maxDollars?, stopLossPct? }
-// Requires header: x-webhook-secret matching WEBHOOK_SECRET env var
-// Bull trades go to ALPACA_KEY account, bear trades go to ALPACA_BEAR_KEY account
+// Inbound trade endpoint — called by Chrome extension or UI watchlist
+// Bull trades → ALPACA_KEY account, bear trades → ALPACA_BEAR_KEY account
 app.post('/trade', async (req, res) => {
   const secret = process.env.WEBHOOK_SECRET;
   if (secret && req.headers['x-webhook-secret'] !== secret) {
@@ -212,33 +241,26 @@ let lastSummaryDate = null;
 async function fetchAccountStats(key, secret) {
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
-
   const r = await fetch(
     `${ALPACA_BASE}/orders?status=all&limit=200&after=${todayStart.toISOString()}&nested=true`,
     { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } }
   );
   if (!r.ok) throw new Error(`Alpaca responded ${r.status}`);
   const orders = await r.json();
-
   const brackets = orders.filter(o => o.order_class === 'bracket' && o.status === 'filled');
   let winners = 0, losers = 0, totalPnl = 0, openTrades = 0;
-
   for (const entry of brackets) {
     const entryPrice = parseFloat(entry.filled_avg_price || 0);
     const qty = parseFloat(entry.filled_qty || entry.qty || 0);
     const filledLeg = (entry.legs || []).find(l => l.status === 'filled');
-
     if (!filledLeg) { openTrades++; continue; }
-
     const exitPrice = parseFloat(filledLeg.filled_avg_price || 0);
     const pnl = entry.side === 'buy'
       ? (exitPrice - entryPrice) * qty
       : (entryPrice - exitPrice) * qty;
-
     totalPnl += pnl;
     filledLeg.order_type === 'limit' ? winners++ : losers++;
   }
-
   return { winners, losers, totalPnl, openTrades };
 }
 
@@ -256,23 +278,20 @@ async function sendDailySummary() {
   try {
     const bull = await fetchAccountStats(bullKey, bullSecret);
     const bear = bearKey && bearSecret ? await fetchAccountStats(bearKey, bearSecret) : null;
-
     const fmt = (stats, label) => {
       const closed = stats.winners + stats.losers;
       const sign = stats.totalPnl >= 0 ? '+' : '';
       const openNote = stats.openTrades > 0 ? ` (${stats.openTrades} open)` : '';
       return `[${label}] ${closed} trades${openNote} · ✅${stats.winners} ❌${stats.losers} · ${sign}$${stats.totalPnl.toFixed(2)}`;
     };
-
     const netPnl = bull.totalPnl + (bear ? bear.totalPnl : 0);
     const netSign = netPnl >= 0 ? '+' : '';
     const lines = [
       `📊 Daily Summary — ${date}`,
       fmt(bull, 'BULL'),
-      bear ? fmt(bear, 'BEAR') : '[BEAR] no account',
+      bear ? fmt(bear, 'BEAR') : '[BEAR] no account configured',
       `Net P&L: ${netSign}$${netPnl.toFixed(2)}`
     ];
-
     await sendTelegram(lines.join('\n'));
     console.log('Daily summary sent');
   } catch (e) { console.error('Daily summary error:', e.message); }
