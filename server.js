@@ -248,11 +248,23 @@ app.get('/schwab/refresh', async (req, res) => {
 // Auto-refresh every 25 minutes (tokens expire in 30)
 setInterval(schwabRefresh, 25 * 60 * 1000);
 
-// Fetch Schwab accounts
+// Fetch Schwab accounts (full detail)
 app.get('/schwab/account', async (req, res) => {
   if (!schwabTokens.accessToken) return res.status(401).json({ error: 'Not authenticated — visit /schwab/auth' });
   try {
     const r = await fetch(`${SCHWAB_TRADE_BASE}/accounts`, {
+      headers: { 'Authorization': `Bearer ${schwabTokens.accessToken}` }
+    });
+    const d = await r.json();
+    res.status(r.status).json(d);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Fetch Schwab encrypted account numbers — these are what the orders API requires
+app.get('/schwab/account/numbers', async (req, res) => {
+  if (!schwabTokens.accessToken) return res.status(401).json({ error: 'Not authenticated — visit /schwab/auth' });
+  try {
+    const r = await fetch(`${SCHWAB_TRADE_BASE}/accounts/accountNumbers`, {
       headers: { 'Authorization': `Bearer ${schwabTokens.accessToken}` }
     });
     const d = await r.json();
