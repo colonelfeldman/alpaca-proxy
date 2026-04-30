@@ -336,19 +336,25 @@ async function parseWatchlist() {
   const msg = document.getElementById('parse-msg');
   if(!text) { msg.innerHTML='<div class="msg msg-err">Please enter watchlist text</div>'; return; }
   const results = [];
+  let lastSymbol = null;
   for(const line of text.split('\n')) {
     const t = line.trim();
     if(!t) continue;
-    const bull = t.match(/^([A-Z]+)\s+Bullish above\s+([\d.]+).*?\(TGT\s+([\d.,\s]+)\)/i);
+    // Bullish always has a symbol prefix
+    const bull = t.match(/^([A-Z]{1,6})\s+Bullish above\s+([\d.]+).*?\(TGT\s+([\d.,\s]+)\)/i);
     if(bull) {
+      lastSymbol = bull[1].toUpperCase();
       const targets = bull[3].split(',').map(x=>parseFloat(x.trim())).filter(x=>!isNaN(x));
-      results.push({symbol:bull[1].toUpperCase(), direction:'bull', trigger:parseFloat(bull[2]), targets, status:'pending'});
+      results.push({symbol:lastSymbol, direction:'bull', trigger:parseFloat(bull[2]), targets, status:'pending'});
       continue;
     }
-    const bear = t.match(/^([A-Z]+)\s+Bearish below\s+([\d.]+).*?\(TGT\s+([\d.,\s]+)\)/i);
+    // Bearish: symbol is optional — inherits from the Bullish line above if missing
+    const bear = t.match(/^(?:([A-Z]{1,6})\s+)?Bearish below\s+([\d.]+).*?\(TGT\s+([\d.,\s]+)\)/i);
     if(bear) {
+      const symbol = bear[1] ? bear[1].toUpperCase() : lastSymbol;
+      if(!symbol) continue;
       const targets = bear[3].split(',').map(x=>parseFloat(x.trim())).filter(x=>!isNaN(x));
-      results.push({symbol:bear[1].toUpperCase(), direction:'bear', trigger:parseFloat(bear[2]), targets, status:'pending'});
+      results.push({symbol, direction:'bear', trigger:parseFloat(bear[2]), targets, status:'pending'});
     }
   }
   if(!results.length) { msg.innerHTML='<div class="msg msg-err">No setups found — check format</div>'; return; }
