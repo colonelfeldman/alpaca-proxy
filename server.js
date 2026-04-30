@@ -155,6 +155,133 @@ app.post('/webhook/alpaca', async (req, res) => {
   await sendTradeNotification(order, 'BULL');
 });
 
+// --- Schwab OAuth & Trading ---
+
+const SCHWAB_AUTH_BASE  = 'https://api.schwabapi.com/v1/oauth';
+const SCHWAB_TRADE_BASE = 'https://api.schwabapi.com/trader/v1';
+const SCHWAB_CALLBACK   = 'https://alpaca-proxy-production.up.railway.app/schwab/callback';
+
+// Tokens live in memory — lost on restart, so /schwab/auth re-authorizes if needed
+let schwabTokens = { accessToken: null, refreshToken: null, expiresAt: null };
+
+function schwabBasicAuth() {
+  const key    = process.env.SCHWAB_APP_KEY;
+  const secret = process.env.SCHWAB_APP_SECRET;
+  if (!key || !secret) throw new Error('SCHWAB_APP_KEY / SCHWAB_APP_SECRET not set');
+  return 'Basic ' + Buffer.from(`${key}:${secret}`).toString('base64');
+}
+
+// Step 1 — redirect browser to Schwab login
+app.get('/schwab/auth', (req, res) => {
+  const key = process.env.SCHWAB_APP_KEY;
+  if (!key) return res.status(500).send('SCHWAB_APP_KEY not set on server');
+  const url = `${SCHWAB_AUTH_BASE}/authorize?client_id=${encodeURIComponent(key)}&redirect_uri=${encodeURIComponent(SCHWAB_CALLBACK)}&response_type=code`;
+  res.redirect(url);
+});
+
+// Step 2 — Schwab redirects here with ?code=..., exchange for tokens
+app.get('/schwab/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send('Missing authorization code');
+  try {
+    const r = await fetch(`${SCHWAB_AUTH_BASE}/token`, {
+      method: 'POST',
+      headers: {
+        'Authorization': schwabBasicAuth(),
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: SCHWAB_CALLBACK
+      }).toString()
+    });
+    const d = await r.json();
+    if (!r.ok) return res.status(r.status).json({ error: d.error_description || JSON.stringify(d) });
+
+    schwabTokens.accessToken  = d.access_token;
+    schwabTokens.refreshToken = d.refresh_token;
+    schwabTokens.expiresAt    = Date.now() + (d.expires_in || 1800) * 1000;
+    console.log('Schwab tokens stored — expires', new Date(schwabTokens.expiresAt).toISOString());
+
+    await sendTelegram('🔗 Schwab connected — OAuth tokens stored. Ready to trade.');
+    res.send('<h2>Schwab connected ✓</h2><p>You can close this tab.</p>');
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Refresh access token using stored refresh token
+async function schwabRefresh() {
+  if (!schwabTokens.refreshToken) { console.warn('Schwab: no refresh token — visit /schwab/auth'); return; }
+  try {
+    const r = await fetch(`${SCHWAB_AUTH_BASE}/token`, {
+      method: 'POST',
+      headers: {
+        'Authorization': schwabBasicAuth(),
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: schwabTokens.refreshToken
+      }).toString()
+    });
+    const d = await r.json();
+    if (!r.ok) { console.error('Schwab refresh failed:', d.error_description || JSON.stringify(d)); return; }
+    schwabTokens.accessToken  = d.access_token;
+    if (d.refresh_token) schwabTokens.refreshToken = d.refresh_token;
+    schwabTokens.expiresAt    = Date.now() + (d.expires_in || 1800) * 1000;
+    console.log('Schwab token refreshed — expires', new Date(schwabTokens.expiresAt).toISOString());
+  } catch (e) { console.error('Schwab refresh error:', e.message); }
+}
+
+// Manual refresh endpoint
+app.get('/schwab/refresh', async (req, res) => {
+  await schwabRefresh();
+  if (schwabTokens.accessToken) {
+    res.json({ ok: true, expiresAt: new Date(schwabTokens.expiresAt).toISOString() });
+  } else {
+    res.status(500).json({ error: 'Refresh failed or no refresh token — visit /schwab/auth' });
+  }
+});
+
+// Auto-refresh every 25 minutes (tokens expire in 30)
+setInterval(schwabRefresh, 25 * 60 * 1000);
+
+// Fetch Schwab accounts
+app.get('/schwab/account', async (req, res) => {
+  if (!schwabTokens.accessToken) return res.status(401).json({ error: 'Not authenticated — visit /schwab/auth' });
+  try {
+    const r = await fetch(`${SCHWAB_TRADE_BASE}/accounts`, {
+      headers: { 'Authorization': `Bearer ${schwabTokens.accessToken}` }
+    });
+    const d = await r.json();
+    res.status(r.status).json(d);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Place an order on Schwab
+// Body: { accountId, ...orderFields }  — accountId required, rest is Schwab order spec
+app.post('/schwab/orders', async (req, res) => {
+  if (!schwabTokens.accessToken) return res.status(401).json({ error: 'Not authenticated — visit /schwab/auth' });
+  const { accountId, ...orderBody } = req.body;
+  if (!accountId) return res.status(400).json({ error: 'accountId is required' });
+  try {
+    const r = await fetch(`${SCHWAB_TRADE_BASE}/accounts/${accountId}/orders`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${schwabTokens.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(orderBody)
+    });
+    // Schwab returns 201 with no body on success
+    if (r.status === 201) return res.json({ ok: true });
+    const d = await r.json();
+    res.status(r.status).json(d);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // --- Shared helpers ---
 
 function classifyOrder(order) {
