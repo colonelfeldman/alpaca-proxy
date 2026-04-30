@@ -52,6 +52,7 @@ app.post('/claude', async (req, res) => {
 // Inbound trade endpoint — called by Chrome extension with a parsed setup
 // Body: { symbol, direction: 'bull'|'bear', trigger, targets: [price,...], maxDollars?, stopLossPct? }
 // Requires header: x-webhook-secret matching WEBHOOK_SECRET env var
+// Bull trades go to ALPACA_KEY account, bear trades go to ALPACA_BEAR_KEY account
 app.post('/trade', async (req, res) => {
   const secret = process.env.WEBHOOK_SECRET;
   if (secret && req.headers['x-webhook-secret'] !== secret) {
@@ -63,17 +64,21 @@ app.post('/trade', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields: symbol, direction, trigger, targets' });
   }
 
-  const key = process.env.ALPACA_KEY;
-  const secret_key = process.env.ALPACA_SECRET;
+  const isBull = direction === 'bull';
+  const label = isBull ? 'BULL' : 'BEAR';
+  const key = isBull ? process.env.ALPACA_KEY : process.env.ALPACA_BEAR_KEY;
+  const secret_key = isBull ? process.env.ALPACA_SECRET : process.env.ALPACA_BEAR_SECRET;
+
   if (!key || !secret_key) {
-    return res.status(500).json({ error: 'ALPACA_KEY / ALPACA_SECRET not set on server' });
+    const missing = isBull ? 'ALPACA_KEY / ALPACA_SECRET' : 'ALPACA_BEAR_KEY / ALPACA_BEAR_SECRET';
+    return res.status(500).json({ error: `${missing} not set on server` });
   }
 
   const dollars = parseFloat(maxDollars) || 10000;
   const slPct = parseFloat(stopLossPct) / 100 || 0.03;
   const qty = Math.max(1, Math.floor(dollars / trigger));
-  const side = direction === 'bull' ? 'buy' : 'sell';
-  const sl = direction === 'bull'
+  const side = isBull ? 'buy' : 'sell';
+  const sl = isBull
     ? Math.round(trigger * (1 - slPct) * 100) / 100
     : Math.round(trigger * (1 + slPct) * 100) / 100;
   const tp = targets[0];
@@ -88,7 +93,7 @@ app.post('/trade', async (req, res) => {
     take_profit: { limit_price: tp },
     stop_loss: {
       stop_price: sl,
-      limit_price: Math.round(sl * (direction === 'bull' ? 0.995 : 1.005) * 100) / 100
+      limit_price: Math.round(sl * (isBull ? 0.995 : 1.005) * 100) / 100
     }
   };
 
@@ -101,12 +106,12 @@ app.post('/trade', async (req, res) => {
     const d = await r.json();
     if (!r.ok) {
       const reason = d.message || JSON.stringify(d);
-      console.error(`Trade rejected: ${side} ${symbol} — ${reason}`);
-      await sendTelegram(`🔴 Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
+      console.error(`[${label}] Trade rejected: ${side} ${symbol} — ${reason}`);
+      await sendTelegram(`🔴 [${label}] Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
       return res.status(r.status).json({ error: reason });
     }
-    console.log(`Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
-    await sendTelegram(`🟢 Order placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nTP $${tp} · SL $${sl}`);
+    console.log(`[${label}] Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
+    await sendTelegram(`🟢 [${label}] Order placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nTP $${tp} · SL $${sl}`);
     res.json({ ok: true, order: d });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -118,7 +123,7 @@ app.post('/webhook/alpaca', async (req, res) => {
   res.sendStatus(200);
   const order = req.body?.data?.order || req.body?.order || req.body;
   if (!order || order.status !== 'filled') return;
-  await sendTradeNotification(order);
+  await sendTradeNotification(order, 'BULL');
 });
 
 // --- Shared helpers ---
@@ -130,14 +135,14 @@ function classifyOrder(order) {
   return 'entry';
 }
 
-function buildTradeMessage(order) {
+function buildTradeMessage(order, label) {
   const symbol = order.symbol || '?';
   const side = (order.side || '').toUpperCase();
   const qty = order.filled_qty || order.qty || '?';
   const price = parseFloat(order.filled_avg_price || 0).toFixed(2);
   const time = order.filled_at ? new Date(order.filled_at).toLocaleString() : new Date().toLocaleString();
   const type = classifyOrder(order);
-  return `✅ ${symbol} filled - ${side} ${qty} shares @ $${price}\nType: ${type}\nTime: ${time}`;
+  return `✅ [${label}] ${symbol} filled - ${side} ${qty} shares @ $${price}\nType: ${type}\nTime: ${time}`;
 }
 
 async function sendTelegram(text) {
@@ -152,18 +157,16 @@ async function sendTelegram(text) {
   }
 }
 
-async function sendTradeNotification(order) {
-  try { await sendTelegram(buildTradeMessage(order)); }
+async function sendTradeNotification(order, label) {
+  try { await sendTelegram(buildTradeMessage(order, label)); }
   catch (e) { console.error('Telegram error:', e.message); }
 }
 
-// --- Filled-order polling (every 30s) ---
+// --- Filled-order polling (every 30s, both accounts) ---
 
 const seenOrderIds = new Set();
 
-async function seedSeenOrders() {
-  const key = process.env.ALPACA_KEY;
-  const secret = process.env.ALPACA_SECRET;
+async function seedAccount(key, secret) {
   if (!key || !secret) return;
   try {
     const r = await fetch(`${ALPACA_BASE}/orders?status=filled&limit=50`, {
@@ -172,78 +175,105 @@ async function seedSeenOrders() {
     if (!r.ok) return;
     const orders = await r.json();
     for (const order of orders) seenOrderIds.add(order.id);
-    console.log(`Seeded ${seenOrderIds.size} existing filled orders (no notifications)`);
   } catch (e) { console.error('Seed error:', e.message); }
 }
 
-async function pollFilledOrders() {
-  const key = process.env.ALPACA_KEY;
-  const secret = process.env.ALPACA_SECRET;
-  if (!key || !secret) { console.warn('ALPACA_KEY / ALPACA_SECRET not set — skipping poll'); return; }
+async function seedSeenOrders() {
+  await seedAccount(process.env.ALPACA_KEY, process.env.ALPACA_SECRET);
+  await seedAccount(process.env.ALPACA_BEAR_KEY, process.env.ALPACA_BEAR_SECRET);
+  console.log(`Seeded ${seenOrderIds.size} existing filled orders (no notifications)`);
+}
 
+async function pollAccount(key, secret, label) {
+  if (!key || !secret) return;
   try {
     const r = await fetch(`${ALPACA_BASE}/orders?status=filled&limit=50`, {
       headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret }
     });
-    if (!r.ok) { console.error('Alpaca poll error:', r.status); return; }
+    if (!r.ok) { console.error(`[${label}] Alpaca poll error:`, r.status); return; }
     const orders = await r.json();
     for (const order of orders) {
       if (seenOrderIds.has(order.id)) continue;
       seenOrderIds.add(order.id);
-      await sendTradeNotification(order);
+      await sendTradeNotification(order, label);
     }
-  } catch (e) { console.error('Poll error:', e.message); }
+  } catch (e) { console.error(`[${label}] Poll error:`, e.message); }
+}
+
+async function pollFilledOrders() {
+  await pollAccount(process.env.ALPACA_KEY, process.env.ALPACA_SECRET, 'BULL');
+  await pollAccount(process.env.ALPACA_BEAR_KEY, process.env.ALPACA_BEAR_SECRET, 'BEAR');
 }
 
 // --- Daily summary at 21:00 UTC (4pm ET) ---
 
 let lastSummaryDate = null;
 
-async function sendDailySummary() {
-  const key = process.env.ALPACA_KEY;
-  const secret = process.env.ALPACA_SECRET;
-  if (!key || !secret) return;
-
+async function fetchAccountStats(key, secret) {
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
 
+  const r = await fetch(
+    `${ALPACA_BASE}/orders?status=all&limit=200&after=${todayStart.toISOString()}&nested=true`,
+    { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } }
+  );
+  if (!r.ok) throw new Error(`Alpaca responded ${r.status}`);
+  const orders = await r.json();
+
+  const brackets = orders.filter(o => o.order_class === 'bracket' && o.status === 'filled');
+  let winners = 0, losers = 0, totalPnl = 0, openTrades = 0;
+
+  for (const entry of brackets) {
+    const entryPrice = parseFloat(entry.filled_avg_price || 0);
+    const qty = parseFloat(entry.filled_qty || entry.qty || 0);
+    const filledLeg = (entry.legs || []).find(l => l.status === 'filled');
+
+    if (!filledLeg) { openTrades++; continue; }
+
+    const exitPrice = parseFloat(filledLeg.filled_avg_price || 0);
+    const pnl = entry.side === 'buy'
+      ? (exitPrice - entryPrice) * qty
+      : (entryPrice - exitPrice) * qty;
+
+    totalPnl += pnl;
+    filledLeg.order_type === 'limit' ? winners++ : losers++;
+  }
+
+  return { winners, losers, totalPnl, openTrades };
+}
+
+async function sendDailySummary() {
+  const bullKey = process.env.ALPACA_KEY;
+  const bullSecret = process.env.ALPACA_SECRET;
+  const bearKey = process.env.ALPACA_BEAR_KEY;
+  const bearSecret = process.env.ALPACA_BEAR_SECRET;
+  if (!bullKey || !bullSecret) return;
+
+  const date = new Date().toLocaleDateString('en-US', {
+    timeZone: 'America/New_York', weekday: 'long', month: 'short', day: 'numeric'
+  });
+
   try {
-    const r = await fetch(
-      `${ALPACA_BASE}/orders?status=all&limit=200&after=${todayStart.toISOString()}&nested=true`,
-      { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } }
-    );
-    if (!r.ok) { console.error('Daily summary fetch error:', r.status); return; }
-    const orders = await r.json();
+    const bull = await fetchAccountStats(bullKey, bullSecret);
+    const bear = bearKey && bearSecret ? await fetchAccountStats(bearKey, bearSecret) : null;
 
-    // Only completed bracket trades (entry filled, one leg filled)
-    const brackets = orders.filter(o => o.order_class === 'bracket' && o.status === 'filled');
-    let winners = 0, losers = 0, totalPnl = 0, openTrades = 0;
+    const fmt = (stats, label) => {
+      const closed = stats.winners + stats.losers;
+      const sign = stats.totalPnl >= 0 ? '+' : '';
+      const openNote = stats.openTrades > 0 ? ` (${stats.openTrades} open)` : '';
+      return `[${label}] ${closed} trades${openNote} · ✅${stats.winners} ❌${stats.losers} · ${sign}$${stats.totalPnl.toFixed(2)}`;
+    };
 
-    for (const entry of brackets) {
-      const entryPrice = parseFloat(entry.filled_avg_price || 0);
-      const qty = parseFloat(entry.filled_qty || entry.qty || 0);
-      const filledLeg = (entry.legs || []).find(l => l.status === 'filled');
+    const netPnl = bull.totalPnl + (bear ? bear.totalPnl : 0);
+    const netSign = netPnl >= 0 ? '+' : '';
+    const lines = [
+      `📊 Daily Summary — ${date}`,
+      fmt(bull, 'BULL'),
+      bear ? fmt(bear, 'BEAR') : '[BEAR] no account',
+      `Net P&L: ${netSign}$${netPnl.toFixed(2)}`
+    ];
 
-      if (!filledLeg) { openTrades++; continue; }
-
-      const exitPrice = parseFloat(filledLeg.filled_avg_price || 0);
-      const pnl = entry.side === 'buy'
-        ? (exitPrice - entryPrice) * qty
-        : (entryPrice - exitPrice) * qty;
-
-      totalPnl += pnl;
-      filledLeg.order_type === 'limit' ? winners++ : losers++;
-    }
-
-    const closed = winners + losers;
-    const date = new Date().toLocaleDateString('en-US', {
-      timeZone: 'America/New_York', weekday: 'long', month: 'short', day: 'numeric'
-    });
-    const sign = totalPnl >= 0 ? '+' : '';
-    const openNote = openTrades > 0 ? `\nStill open: ${openTrades}` : '';
-    const text = `📊 Daily Summary — ${date}\nTrades closed: ${closed}${openNote}\nWinners ✅: ${winners}  Losers ❌: ${losers}\nNet P&L: ${sign}$${totalPnl.toFixed(2)}`;
-
-    await sendTelegram(text);
+    await sendTelegram(lines.join('\n'));
     console.log('Daily summary sent');
   } catch (e) { console.error('Daily summary error:', e.message); }
 }
