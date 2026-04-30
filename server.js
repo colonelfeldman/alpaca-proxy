@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const WebSocket = require('ws');
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -50,15 +49,29 @@ app.post('/claude', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- Shared trade placement helper ---
-// Used by both the /trade HTTP endpoint and the chatroom monitor
-async function placeTradeOrder({ symbol, direction, trigger, targets, maxDollars = 10000, stopLossPct = 3 }) {
+// Inbound trade endpoint — called by Chrome extension with a parsed setup
+// Body: { symbol, direction: 'bull'|'bear', trigger, targets: [price,...], maxDollars?, stopLossPct? }
+// Requires header: x-webhook-secret matching WEBHOOK_SECRET env var
+app.post('/trade', async (req, res) => {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret && req.headers['x-webhook-secret'] !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { symbol, direction, trigger, targets, maxDollars, stopLossPct } = req.body;
+  if (!symbol || !direction || !trigger || !targets?.length) {
+    return res.status(400).json({ error: 'Missing required fields: symbol, direction, trigger, targets' });
+  }
+
   const key = process.env.ALPACA_KEY;
   const secret_key = process.env.ALPACA_SECRET;
-  if (!key || !secret_key) return { ok: false, error: 'ALPACA_KEY / ALPACA_SECRET not set' };
+  if (!key || !secret_key) {
+    return res.status(500).json({ error: 'ALPACA_KEY / ALPACA_SECRET not set on server' });
+  }
 
-  const slPct = stopLossPct / 100;
-  const qty = Math.max(1, Math.floor(maxDollars / trigger));
+  const dollars = parseFloat(maxDollars) || 10000;
+  const slPct = parseFloat(stopLossPct) / 100 || 0.03;
+  const qty = Math.max(1, Math.floor(dollars / trigger));
   const side = direction === 'bull' ? 'buy' : 'sell';
   const sl = direction === 'bull'
     ? Math.round(trigger * (1 - slPct) * 100) / 100
@@ -79,46 +92,22 @@ async function placeTradeOrder({ symbol, direction, trigger, targets, maxDollars
     }
   };
 
-  const r = await fetch(`${ALPACA_BASE}/orders`, {
-    method: 'POST',
-    headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret_key, 'Content-Type': 'application/json' },
-    body: JSON.stringify(order)
-  });
-  const d = await r.json();
-  if (!r.ok) {
-    return { ok: false, error: d.message || JSON.stringify(d), symbol, side, trigger };
-  }
-  return { ok: true, order: d, symbol, side, qty, trigger, tp, sl };
-}
-
-// Inbound trade endpoint — called by Chrome extension with a parsed setup
-// Body: { symbol, direction: 'bull'|'bear', trigger, targets: [price,...], maxDollars?, stopLossPct? }
-// Requires header: x-webhook-secret matching WEBHOOK_SECRET env var
-app.post('/trade', async (req, res) => {
-  const secret = process.env.WEBHOOK_SECRET;
-  if (secret && req.headers['x-webhook-secret'] !== secret) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  const { symbol, direction, trigger, targets, maxDollars, stopLossPct } = req.body;
-  if (!symbol || !direction || !trigger || !targets?.length) {
-    return res.status(400).json({ error: 'Missing required fields: symbol, direction, trigger, targets' });
-  }
-
   try {
-    const result = await placeTradeOrder({
-      symbol, direction, trigger, targets,
-      maxDollars: parseFloat(maxDollars) || 10000,
-      stopLossPct: parseFloat(stopLossPct) || 3
+    const r = await fetch(`${ALPACA_BASE}/orders`, {
+      method: 'POST',
+      headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret_key, 'Content-Type': 'application/json' },
+      body: JSON.stringify(order)
     });
-    if (!result.ok) {
-      console.error(`Trade rejected: ${result.side} ${symbol} — ${result.error}`);
-      await sendTelegram(`🔴 Order rejected: ${symbol} ${result.side?.toUpperCase()} @ $${trigger}\nReason: ${result.error}`);
-      return res.status(400).json({ error: result.error });
+    const d = await r.json();
+    if (!r.ok) {
+      const reason = d.message || JSON.stringify(d);
+      console.error(`Trade rejected: ${side} ${symbol} — ${reason}`);
+      await sendTelegram(`🔴 Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
+      return res.status(r.status).json({ error: reason });
     }
-    console.log(`Trade placed: ${result.side} ${result.qty} ${symbol} @ ${trigger}`);
-    await sendTelegram(`🟢 Order placed: ${symbol} ${result.side.toUpperCase()} ${result.qty} sh @ $${result.trigger}\nTP $${result.tp} · SL $${result.sl}`);
-    res.json({ ok: true, order: result.order });
+    console.log(`Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
+    await sendTelegram(`🟢 Order placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nTP $${tp} · SL $${sl}`);
+    res.json({ ok: true, order: d });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -131,208 +120,6 @@ app.post('/webhook/alpaca', async (req, res) => {
   if (!order || order.status !== 'filled') return;
   await sendTradeNotification(order);
 });
-
-// Manual trigger — fetches chatroom alerts for a specific date and places trades
-// POST /trigger-chatroom          → uses today's date
-// POST /trigger-chatroom?date=YYYY-MM-DD  → uses provided date (useful for testing past setups)
-app.post('/trigger-chatroom', async (req, res) => {
-  const date = req.query.date || new Date().toISOString().slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
-  }
-  try {
-    const results = await runChatroomMonitor(date);
-    res.json({ date, ...results });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// --- Chatroom Monitor ---
-
-// Parse a block of text from a single chat message into trade setups.
-// Handles "AAPL Bullish above 180 (TGT 185, 190)" and Bearish lines that inherit the prior symbol.
-function parseAlertText(text) {
-  const setups = [];
-  const lines = text.split('\n');
-  let lastSymbol = null;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Full line: "AAPL Bullish above 180 (TGT 185)"
-    let m = trimmed.match(/^([A-Z]{1,6})\s+(Bullish|Bearish)\s+(?:above|below)\s+([\d.]+)\s*\(TGT\s*([\d.,\s]+)\)/i);
-    if (m) {
-      const symbol = m[1].toUpperCase();
-      const direction = m[2].toLowerCase() === 'bullish' ? 'bull' : 'bear';
-      const trigger = parseFloat(m[3]);
-      const targets = m[4].split(',').map(t => parseFloat(t.trim())).filter(t => !isNaN(t) && t > 0);
-      if (direction === 'bull') lastSymbol = symbol;
-      if (trigger > 0 && targets.length > 0) setups.push({ symbol, direction, trigger, targets });
-      continue;
-    }
-
-    // Symbol-less line (Bearish inherits from prior Bullish): "Bearish below 175 (TGT 170)"
-    m = trimmed.match(/^(Bullish|Bearish)\s+(?:above|below)\s+([\d.]+)\s*\(TGT\s*([\d.,\s]+)\)/i);
-    if (m && lastSymbol) {
-      const direction = m[1].toLowerCase() === 'bullish' ? 'bull' : 'bear';
-      const trigger = parseFloat(m[2]);
-      const targets = m[3].split(',').map(t => parseFloat(t.trim())).filter(t => !isNaN(t) && t > 0);
-      if (trigger > 0 && targets.length > 0) setups.push({ symbol: lastSymbol, direction, trigger, targets });
-    }
-  }
-
-  return setups;
-}
-
-// Connect to the ProTradingRoom WebSocket, collect the alerts log, then process it.
-// targetDate is "YYYY-MM-DD" — only alerts posted on that date are traded.
-async function runChatroomMonitor(targetDate) {
-  const ptrToken = process.env.PTR_TOKEN;
-  if (!ptrToken) {
-    console.error('Chatroom monitor: PTR_TOKEN env var not set');
-    return { error: 'PTR_TOKEN not set' };
-  }
-
-  console.log(`Chatroom monitor starting for ${targetDate}`);
-
-  return new Promise((resolve) => {
-    const ws = new WebSocket('wss://chat5.protradingroom.com/?id=61cb5b432fcdee7bc8e97935&sl=1', {
-      headers: {
-        'Origin': 'https://chat5.protradingroom.com',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-      }
-    });
-    const collectedAlerts = [];
-    let settled = false;
-
-    function finish() {
-      if (settled) return;
-      settled = true;
-      ws.terminate();
-    }
-
-    // Disconnect after 10 seconds no matter what
-    const timeout = setTimeout(finish, 10000);
-
-    // Capture the full HTTP response when the server rejects the WS upgrade —
-    // this tells us exactly what the server is returning so we can fix auth.
-    ws.on('unexpected-response', (req, res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        console.error(`PTR WS rejected: HTTP ${res.statusCode}`);
-        console.error('Response headers:', JSON.stringify(res.headers));
-        console.error('Response body:', body.slice(0, 1000));
-        clearTimeout(timeout);
-        settled = true;
-        resolve({ error: `WS upgrade rejected: HTTP ${res.statusCode}`, statusCode: res.statusCode, responseBody: body.slice(0, 500) });
-      });
-    });
-
-    ws.on('open', () => {
-      console.log('PTR WebSocket connected');
-      ws.send(JSON.stringify({ event: 'cmd', data: { cmd: 'login', data: { token: ptrToken } } }));
-      ws.send(JSON.stringify({ event: 'cmd', data: { cmd: 'getAlertsLog', data: { page: 1 } } }));
-    });
-
-    ws.on('message', (raw) => {
-      try {
-        const msg = JSON.parse(raw.toString());
-        // Log a preview so we can see the structure if something looks wrong
-        console.log('PTR message:', msg.event, JSON.stringify(msg).slice(0, 300));
-
-        // The server might return alerts under different key names — try them all
-        const candidates = [
-          msg.data?.alerts,
-          msg.data?.data?.alerts,
-          msg.data?.messages,
-          msg.data?.data?.messages,
-          Array.isArray(msg.data) ? msg.data : null
-        ].filter(Array.isArray);
-
-        for (const list of candidates) collectedAlerts.push(...list);
-      } catch (e) {
-        console.error('PTR WS parse error:', e.message);
-      }
-    });
-
-    ws.on('close', async () => {
-      clearTimeout(timeout);
-      console.log(`PTR WebSocket closed. Raw alerts collected: ${collectedAlerts.length}`);
-      try {
-        const results = await processAlerts(collectedAlerts, targetDate);
-        resolve(results);
-      } catch (e) {
-        console.error('processAlerts error:', e.message);
-        resolve({ error: e.message });
-      }
-    });
-
-    ws.on('error', (e) => {
-      clearTimeout(timeout);
-      console.error('PTR WS error:', e.message);
-      resolve({ error: e.message });
-    });
-  });
-}
-
-// Filter alerts to StefanieK + targetDate, parse each message, place bracket orders.
-async function processAlerts(alerts, targetDate) {
-  const placed = [];
-  const rejected = [];
-  const skipped = [];
-
-  for (const alert of alerts) {
-    // Normalize field names — the PTR server may use different keys
-    const author = alert.user || alert.author || alert.username || alert.name || '';
-    const text = alert.message || alert.text || alert.content || alert.body || '';
-    const timestamp = alert.timestamp || alert.date || alert.created_at || alert.time || '';
-
-    if (!author.toLowerCase().includes('stefaniek')) {
-      skipped.push(`not StefanieK (got "${author}")`);
-      continue;
-    }
-
-    if (timestamp) {
-      const alertDate = new Date(timestamp).toISOString().slice(0, 10);
-      if (alertDate !== targetDate) {
-        skipped.push(`wrong date ${alertDate}`);
-        continue;
-      }
-    }
-
-    const setups = parseAlertText(text);
-    if (setups.length === 0) {
-      skipped.push(`no setups parsed: "${text.slice(0, 80)}"`);
-      continue;
-    }
-
-    for (const setup of setups) {
-      try {
-        const result = await placeTradeOrder(setup);
-        if (result.ok) {
-          console.log(`Chatroom trade placed: ${result.side} ${result.qty} ${result.symbol} @ ${result.trigger}`);
-          await sendTelegram(`🟢 Order placed: ${result.symbol} ${result.side.toUpperCase()} ${result.qty} sh @ $${result.trigger}\nTP $${result.tp} · SL $${result.sl}`);
-          placed.push({ symbol: result.symbol, side: result.side, qty: result.qty, trigger: result.trigger });
-        } else {
-          console.error(`Chatroom trade rejected: ${setup.symbol} — ${result.error}`);
-          await sendTelegram(`🔴 Order rejected: ${setup.symbol} ${setup.direction === 'bull' ? 'BUY' : 'SELL'} @ $${setup.trigger}\nReason: ${result.error}`);
-          rejected.push({ symbol: setup.symbol, error: result.error });
-        }
-      } catch (e) {
-        console.error('Chatroom placeTradeOrder error:', e.message);
-        rejected.push({ symbol: setup.symbol, error: e.message });
-      }
-    }
-  }
-
-  const summary = `📋 Chatroom Monitor — ${targetDate}\nPlaced: ${placed.length} · Rejected: ${rejected.length} · Skipped alerts: ${skipped.length}`;
-  await sendTelegram(summary).catch(e => console.error('Summary telegram error:', e.message));
-  console.log(summary);
-
-  return { placed, rejected, skippedCount: skipped.length };
-}
 
 // --- Shared helpers ---
 
@@ -408,20 +195,7 @@ async function pollFilledOrders() {
   } catch (e) { console.error('Poll error:', e.message); }
 }
 
-// --- Daily chatroom monitor at 14:00 UTC (6am PST) ---
-
-let lastChatroomDate = null;
-
-setInterval(() => {
-  const now = new Date();
-  const dateStr = now.toISOString().slice(0, 10);
-  if (now.getUTCHours() === 14 && now.getUTCMinutes() === 0 && lastChatroomDate !== dateStr) {
-    lastChatroomDate = dateStr;
-    runChatroomMonitor(dateStr).catch(e => console.error('Chatroom monitor error:', e.message));
-  }
-}, 60_000);
-
-// --- Daily P&L summary at 21:00 UTC (4pm ET) ---
+// --- Daily summary at 21:00 UTC (4pm ET) ---
 
 let lastSummaryDate = null;
 
