@@ -58,7 +58,7 @@
   .badge-placed { background: var(--accent-dim); color: var(--accent); }
   .badge-error { background: var(--red-dim); color: var(--red); }
   .badge-pending { background: var(--amber-dim); color: var(--amber); }
-  .setup-row { display: grid; grid-template-columns: 56px 76px 1fr 80px 90px; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .setup-row { display: grid; grid-template-columns: 56px 76px 1fr 80px 160px; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
   .setup-row:last-child { border-bottom: none; }
   .setup-row.placed-row { opacity: 0.4; }
   .symbol { font-family: var(--mono); font-weight: 500; font-size: 14px; }
@@ -73,7 +73,10 @@
   .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 2.5rem 0; font-family: var(--mono); }
   .note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.6; }
   .spacer { margin-bottom: 12px; }
-  .col-header { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 8px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: 56px 76px 1fr 80px 90px; gap: 10px; margin-bottom: 2px; }
+  .col-header { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 8px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: 56px 76px 1fr 80px 160px; gap: 10px; margin-bottom: 2px; }
+  .btn-schwab { background: rgba(251,191,36,0.15); border: 1px solid rgba(251,191,36,0.4); color: var(--amber); }
+  .btn-schwab:hover { background: rgba(251,191,36,0.25); }
+  .btn-schwab:disabled { opacity: 0.4; cursor: not-allowed; }
   .settings-row { display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
   .settings-row > div { display: flex; flex-direction: column; }
   .settings-row input { width: 90px; }
@@ -345,7 +348,7 @@ async function parseWatchlist() {
     if(bull) {
       lastSymbol = bull[1].toUpperCase();
       const targets = bull[3].split(',').map(x=>parseFloat(x.trim())).filter(x=>!isNaN(x));
-      results.push({symbol:lastSymbol, direction:'bull', trigger:parseFloat(bull[2]), targets, status:'pending'});
+      results.push({symbol:lastSymbol, direction:'bull', trigger:parseFloat(bull[2]), targets, status:'pending', schwabStatus:'pending'});
       continue;
     }
     // Bearish: symbol is optional — inherits from the Bullish line above if missing
@@ -354,7 +357,7 @@ async function parseWatchlist() {
       const symbol = bear[1] ? bear[1].toUpperCase() : lastSymbol;
       if(!symbol) continue;
       const targets = bear[3].split(',').map(x=>parseFloat(x.trim())).filter(x=>!isNaN(x));
-      results.push({symbol, direction:'bear', trigger:parseFloat(bear[2]), targets, status:'pending'});
+      results.push({symbol, direction:'bear', trigger:parseFloat(bear[2]), targets, status:'pending', schwabStatus:'pending'});
     }
   }
   if(!results.length) { msg.innerHTML='<div class="msg msg-err">No setups found — check format</div>'; return; }
@@ -388,8 +391,13 @@ function renderSetups() {
       </span>
       <span class="badge ${statusBadge}">${statusLabel}</span>
       ${showButtons
-        ? `<div style="display:flex;gap:6px;">
-            <button class="btn-success btn btn-sm" onclick="placeSingle(${i})">Place</button>
+        ? `<div style="display:flex;gap:5px;flex-wrap:wrap;">
+            <button class="btn-success btn btn-sm" onclick="placeSingle(${i})" ${s.status==='placed'?'disabled':''}>
+              ${s.status==='placed'?'✓ Alpaca':'Alpaca'}
+            </button>
+            <button class="btn-schwab btn btn-sm" onclick="placeSchwabSingle(${i})" ${s.schwabStatus==='placed'?'disabled':''}>
+              ${s.schwabStatus==='placed'?'✓ Schwab':'🟡 Schwab'}
+            </button>
             <button class="btn-danger btn btn-sm" onclick="removeSetup(${i})">✕</button>
            </div>`
         : '<span></span>'}
@@ -429,6 +437,39 @@ async function placeSingle(i) {
   } catch(e) {
     parsedSetups[i].status = 'error';
     alert('Error for '+s.symbol+': '+e.message);
+  }
+  renderSetups();
+}
+
+async function submitSchwabBracket(s) {
+  const r = await fetch(PROXY+'/schwab/bracket', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol: s.symbol,
+      direction: s.direction,
+      trigger: s.trigger,
+      targets: s.targets,
+      maxDollars: parseFloat(document.getElementById('maxDollars').value) || 10000,
+      stopLossPct: parseFloat(document.getElementById('stopLossPct').value) || 3
+    })
+  });
+  const d = await r.json();
+  if(!r.ok) throw new Error(d.error||JSON.stringify(d));
+  return d;
+}
+
+async function placeSchwabSingle(i) {
+  const s = parsedSetups[i];
+  const rows = document.querySelectorAll('.setup-row');
+  const btn = rows[i] ? rows[i].querySelectorAll('button')[1] : null; // Schwab is 2nd button
+  if(btn) { btn.disabled=true; btn.innerHTML='<span class="spinner"></span>'; }
+  try {
+    await submitSchwabBracket(s);
+    parsedSetups[i].schwabStatus = 'placed';
+  } catch(e) {
+    parsedSetups[i].schwabStatus = 'error';
+    alert('Schwab error for '+s.symbol+': '+e.message);
   }
   renderSetups();
 }
