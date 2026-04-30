@@ -198,7 +198,10 @@ async function runChatroomMonitor(targetDate) {
 
   return new Promise((resolve) => {
     const ws = new WebSocket('wss://chat5.protradingroom.com/?id=61cb5b432fcdee7bc8e97935&sl=1', {
-      headers: { 'Origin': 'https://chat5.protradingroom.com' }
+      headers: {
+        'Origin': 'https://chat5.protradingroom.com',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      }
     });
     const collectedAlerts = [];
     let settled = false;
@@ -211,6 +214,21 @@ async function runChatroomMonitor(targetDate) {
 
     // Disconnect after 10 seconds no matter what
     const timeout = setTimeout(finish, 10000);
+
+    // Capture the full HTTP response when the server rejects the WS upgrade —
+    // this tells us exactly what the server is returning so we can fix auth.
+    ws.on('unexpected-response', (req, res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        console.error(`PTR WS rejected: HTTP ${res.statusCode}`);
+        console.error('Response headers:', JSON.stringify(res.headers));
+        console.error('Response body:', body.slice(0, 1000));
+        clearTimeout(timeout);
+        settled = true;
+        resolve({ error: `WS upgrade rejected: HTTP ${res.statusCode}`, statusCode: res.statusCode, responseBody: body.slice(0, 500) });
+      });
+    });
 
     ws.on('open', () => {
       console.log('PTR WebSocket connected');
