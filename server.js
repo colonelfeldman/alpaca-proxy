@@ -260,7 +260,7 @@ app.get('/schwab/account', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Place an order on Schwab
+// Place an order on Schwab (raw — full Schwab order spec in body)
 // Body: { accountId, ...orderFields }  — accountId required, rest is Schwab order spec
 app.post('/schwab/orders', async (req, res) => {
   if (!schwabTokens.accessToken) return res.status(401).json({ error: 'Not authenticated — visit /schwab/auth' });
@@ -280,6 +280,89 @@ app.post('/schwab/orders', async (req, res) => {
     const d = await r.json();
     res.status(r.status).json(d);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Place a bracket order on Schwab using the same simple format as /trade
+// Body: { symbol, direction: 'bull'|'bear', trigger, targets: [price,...], maxDollars?, stopLossPct? }
+// Uses SCHWAB_ACCOUNT_ID env var — no need to specify account each time
+app.post('/schwab/bracket', async (req, res) => {
+  if (!schwabTokens.accessToken) return res.status(401).json({ error: 'Not authenticated — visit /schwab/auth' });
+
+  const accountId = process.env.SCHWAB_ACCOUNT_ID;
+  if (!accountId) return res.status(500).json({ error: 'SCHWAB_ACCOUNT_ID not set on server' });
+
+  const { symbol, direction, trigger, targets, maxDollars, stopLossPct } = req.body;
+  if (!symbol || !direction || !trigger || !targets?.length) {
+    return res.status(400).json({ error: 'Missing required fields: symbol, direction, trigger, targets' });
+  }
+
+  const isBull    = direction === 'bull';
+  const dollars   = parseFloat(maxDollars) || 10000;
+  const slPct     = parseFloat(stopLossPct) / 100 || 0.03;
+  const qty       = Math.max(1, Math.floor(dollars / trigger));
+  const entryInstruction = isBull ? 'BUY'  : 'SELL_SHORT';
+  const exitInstruction  = isBull ? 'SELL' : 'BUY_TO_COVER';
+  const tp = targets[0];
+  const sl = isBull
+    ? Math.round(trigger * (1 - slPct) * 100) / 100
+    : Math.round(trigger * (1 + slPct) * 100) / 100;
+
+  const instrument = { symbol: symbol.toUpperCase(), assetType: 'EQUITY' };
+
+  // Schwab bracket = TRIGGER order (stop entry) with a child OCO (limit TP + stop SL)
+  const order = {
+    orderStrategyType: 'TRIGGER',
+    orderType: 'STOP',
+    stopPrice: trigger,
+    duration: 'DAY',
+    session: 'NORMAL',
+    orderLegCollection: [{ instruction: entryInstruction, quantity: qty, instrument }],
+    childOrderStrategies: [{
+      orderStrategyType: 'OCO',
+      childOrderStrategies: [
+        {
+          orderStrategyType: 'SINGLE',
+          orderType: 'LIMIT',
+          price: tp,
+          duration: 'DAY',
+          session: 'NORMAL',
+          orderLegCollection: [{ instruction: exitInstruction, quantity: qty, instrument }]
+        },
+        {
+          orderStrategyType: 'SINGLE',
+          orderType: 'STOP',
+          stopPrice: sl,
+          duration: 'DAY',
+          session: 'NORMAL',
+          orderLegCollection: [{ instruction: exitInstruction, quantity: qty, instrument }]
+        }
+      ]
+    }]
+  };
+
+  try {
+    const r = await fetch(`${SCHWAB_TRADE_BASE}/accounts/${accountId}/orders`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${schwabTokens.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(order)
+    });
+    if (r.status === 201) {
+      const label = isBull ? 'BULL' : 'BEAR';
+      console.log(`[SCHWAB ${label}] Bracket placed: ${entryInstruction} ${qty} ${symbol} @ ${trigger}`);
+      await sendTelegram(`🟡 [SCHWAB ${label}] Bracket placed: ${symbol} ${entryInstruction} ${qty} sh @ $${trigger}\nTP $${tp} · SL $${sl} 🟡`);
+      return res.json({ ok: true, symbol, direction, qty, trigger, tp, sl });
+    }
+    const d = await r.json();
+    const reason = d.message || JSON.stringify(d);
+    console.error(`[SCHWAB] Order rejected: ${reason}`);
+    await sendTelegram(`🟡 [SCHWAB] Order rejected: ${symbol} @ $${trigger}\nReason: ${reason}`);
+    res.status(r.status).json({ error: reason });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // --- Shared helpers ---
