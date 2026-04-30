@@ -415,7 +415,7 @@ function buildTradeMessage(order, label) {
   const price = parseFloat(order.filled_avg_price || 0).toFixed(2);
   const time = order.filled_at ? new Date(order.filled_at).toLocaleString() : new Date().toLocaleString();
   const type = classifyOrder(order);
-  const emoji = label === 'BULL' ? '✅' : '🟦✔️';
+  const emoji = label === 'BULL' ? '✅' : '🟦';
   return `${emoji} [${label}] ${symbol} filled - ${side} ${qty} shares @ $${price}\nType: ${type}\nTime: ${time} ${emoji}`;
 }
 
