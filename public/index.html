@@ -459,26 +459,21 @@ function removeSetup(i) { parsedSetups.splice(i,1); renderSetups(); }
 
 // ── Order placement ──────────────────────────────────────────────────────────
 async function submitBracket(s) {
-  const qty = Math.max(1, Math.floor(parseFloat(document.getElementById('maxDollars').value) / s.trigger));
-  const side = s.direction==='bull' ? 'buy' : 'sell';
-  const sl = calcStopLoss(s.trigger, s.direction);
-  const tp = s.targets[0];
-  const body = {
-    symbol: s.symbol, qty, side,
-    type: 'stop_limit',
-    stop_price: s.trigger,
-    limit_price: s.trigger,
-    time_in_force: 'day',
-    order_class: 'bracket',
-    take_profit: { limit_price: tp },
-    stop_loss: {
-      stop_price: sl,
-      limit_price: round2(sl * (s.direction==='bull' ? 0.995 : 1.005))
-    }
-  };
-  const r = await fetch(PROXY+'/alpaca/orders', {method:'POST', headers:getHeaders(), body:JSON.stringify(body)});
+  // Route through /trade so bull→bull account, bear→bear account
+  const r = await fetch(PROXY+'/trade', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-webhook-secret': 'alpaca-secret-jeff-2020' },
+    body: JSON.stringify({
+      symbol: s.symbol,
+      direction: s.direction,
+      trigger: s.trigger,
+      targets: s.targets,
+      maxDollars: parseFloat(document.getElementById('maxDollars').value) || 10000,
+      stopLossPct: parseFloat(document.getElementById('stopLossPct').value) || 3
+    })
+  });
   const d = await r.json();
-  if(!r.ok) throw new Error(d.message||JSON.stringify(d));
+  if(!r.ok) throw new Error(d.error||JSON.stringify(d));
   return d;
 }
 
