@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -161,8 +162,25 @@ const SCHWAB_AUTH_BASE  = 'https://api.schwabapi.com/v1/oauth';
 const SCHWAB_TRADE_BASE = 'https://api.schwabapi.com/trader/v1';
 const SCHWAB_CALLBACK   = 'https://alpaca-proxy-production.up.railway.app/schwab/callback';
 
-// Tokens live in memory — lost on restart, so /schwab/auth re-authorizes if needed
-let schwabTokens = { accessToken: null, refreshToken: null, expiresAt: null };
+// Tokens are persisted to disk so they survive Railway restarts
+const SCHWAB_TOKEN_FILE = path.join(__dirname, '.schwab-tokens.json');
+
+function loadSchwabTokens() {
+  try {
+    if (fs.existsSync(SCHWAB_TOKEN_FILE)) {
+      return JSON.parse(fs.readFileSync(SCHWAB_TOKEN_FILE, 'utf8'));
+    }
+  } catch (e) { console.error('Failed to load Schwab tokens:', e.message); }
+  return { accessToken: null, refreshToken: null, expiresAt: null };
+}
+
+function saveSchwabTokens(tokens) {
+  try { fs.writeFileSync(SCHWAB_TOKEN_FILE, JSON.stringify(tokens), 'utf8'); }
+  catch (e) { console.error('Failed to save Schwab tokens:', e.message); }
+}
+
+let schwabTokens = loadSchwabTokens();
+if (schwabTokens.accessToken) console.log('Schwab tokens loaded from disk — expires', new Date(schwabTokens.expiresAt).toISOString());
 
 function schwabBasicAuth() {
   const key    = process.env.SCHWAB_APP_KEY;
@@ -202,6 +220,7 @@ app.get('/schwab/callback', async (req, res) => {
     schwabTokens.accessToken  = d.access_token;
     schwabTokens.refreshToken = d.refresh_token;
     schwabTokens.expiresAt    = Date.now() + (d.expires_in || 1800) * 1000;
+    saveSchwabTokens(schwabTokens);
     console.log('Schwab tokens stored — expires', new Date(schwabTokens.expiresAt).toISOString());
 
     await sendTelegram('🔗 Schwab connected — OAuth tokens stored. Ready to trade.');
@@ -231,6 +250,7 @@ async function schwabRefresh() {
     schwabTokens.accessToken  = d.access_token;
     if (d.refresh_token) schwabTokens.refreshToken = d.refresh_token;
     schwabTokens.expiresAt    = Date.now() + (d.expires_in || 1800) * 1000;
+    saveSchwabTokens(schwabTokens);
     console.log('Schwab token refreshed — expires', new Date(schwabTokens.expiresAt).toISOString());
   } catch (e) { console.error('Schwab refresh error:', e.message); }
 }
