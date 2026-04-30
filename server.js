@@ -137,7 +137,8 @@ app.post('/trade', async (req, res) => {
     if (!r.ok) {
       const reason = d.message || JSON.stringify(d);
       console.error(`[${label}] Trade rejected: ${side} ${symbol} — ${reason}`);
-      await sendTelegram(`🔴 [${label}] Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason} 🔴`);
+      const acctEmoji = label === 'BULL' ? '🟢' : '🔵';
+      await sendTelegram(`🟥✖️ ${acctEmoji} [${label}] Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
       return res.status(r.status).json({ error: reason });
     }
     console.log(`[${label}] Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
@@ -414,7 +415,7 @@ function buildTradeMessage(order, label) {
   const price = parseFloat(order.filled_avg_price || 0).toFixed(2);
   const time = order.filled_at ? new Date(order.filled_at).toLocaleString() : new Date().toLocaleString();
   const type = classifyOrder(order);
-  const emoji = label === 'BULL' ? '✅' : '🔵';
+  const emoji = label === 'BULL' ? '✅' : '☑️';
   return `${emoji} [${label}] ${symbol} filled - ${side} ${qty} shares @ $${price}\nType: ${type}\nTime: ${time} ${emoji}`;
 }
 
