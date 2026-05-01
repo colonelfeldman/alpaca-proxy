@@ -139,6 +139,7 @@ app.post('/trade', async (req, res) => {
         target1: tp, target2: t2, trailPct: trail, stopLossPrice: sl,
         acct: isBull ? 'bull' : 'bear', status: 'pending_fill', exitOrderIds: null, qty
       };
+      saveOrderMetadata();
       console.log(`[${label}] Multi-target trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
       await sendTelegram(`${acctEmoji} [${label}] Multi-target placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nT1 $${tp}${t2 ? ` · T2 $${t2}` : ''} · Trail ${trail}% · SL $${sl} ${acctEmoji}`);
       return res.json({ ok: true, order: d, orderId: d.id });
@@ -190,6 +191,7 @@ app.post('/alpaca/orders/metadata', (req, res) => {
     label: isBull ? 'BULL' : 'BEAR',
     status: 'pending_fill', exitOrderIds: null
   };
+  saveOrderMetadata();
   res.json({ ok: true });
 });
 
@@ -522,6 +524,7 @@ async function placeMultiTargetExits(entryOrder, meta, key, secret) {
     if (placed.t2OrderId)    exitToEntry[placed.t2OrderId]    = entryOrder.id;
     if (placed.trailOrderId) exitToEntry[placed.trailOrderId] = entryOrder.id;
     if (placed.slOrderId)    exitToEntry[placed.slOrderId]    = entryOrder.id;
+    saveOrderMetadata();
   } catch(e) {
     console.error(`[${label}] Multi-target exits error: ${e.message}`);
     await sendTelegram(`⚠️ [${label}] Failed to place multi exits for ${symbol}: ${e.message}`).catch(() => {});
@@ -550,17 +553,74 @@ async function handleTarget2Fill(entryId, meta, key, secret) {
     const d = await r.json();
     if (d.id) { meta.exitOrderIds.slOrderId = d.id; exitToEntry[d.id] = entryId; }
     meta.status = 'target2_filled';
+    saveOrderMetadata();
     await sendTelegram(`🎯 [${label}] T2 filled for ${symbol} — stop moved to T1 $${target1} for ${share3} shares`);
   } catch(e) {
     console.error(`[${label}] handleTarget2Fill error: ${e.message}`);
   }
 }
 
+// --- Multi-target metadata persistence ---
+
+const ORDER_META_FILE = path.join(__dirname, '.order-metadata.json');
+
+function loadOrderMetadata() {
+  try {
+    if (fs.existsSync(ORDER_META_FILE)) return JSON.parse(fs.readFileSync(ORDER_META_FILE, 'utf8'));
+  } catch(e) { console.error('Failed to load order metadata:', e.message); }
+  return {};
+}
+
+function saveOrderMetadata() {
+  try { fs.writeFileSync(ORDER_META_FILE, JSON.stringify(orderMetadata), 'utf8'); }
+  catch(e) { console.error('Failed to save order metadata:', e.message); }
+}
+
 // --- Filled-order polling (every 30s, both accounts) ---
 
 const seenOrderIds = new Set();
-const orderMetadata = {}; // orderId → multi-target state
-const exitToEntry = {};   // exitOrderId → entryOrderId
+const orderMetadata = loadOrderMetadata(); // persisted across server restarts
+const exitToEntry = {};   // exitOrderId → entryOrderId (rebuilt from metadata on start)
+
+// Rebuild exitToEntry reverse-map from persisted metadata
+function rebuildExitToEntry() {
+  for (const [entryId, meta] of Object.entries(orderMetadata)) {
+    if (!meta.exitOrderIds) continue;
+    const { t1OrderId, t2OrderId, trailOrderId, slOrderId } = meta.exitOrderIds;
+    if (t1OrderId)    exitToEntry[t1OrderId]    = entryId;
+    if (t2OrderId)    exitToEntry[t2OrderId]    = entryId;
+    if (trailOrderId) exitToEntry[trailOrderId] = entryId;
+    if (slOrderId)    exitToEntry[slOrderId]    = entryId;
+  }
+}
+
+// On startup: check if any pending_fill entries filled while server was down
+async function recoverMultiTargetOrders() {
+  const pending = Object.entries(orderMetadata).filter(([, m]) => m.mode === 'multi' && m.status === 'pending_fill');
+  if (!pending.length) return;
+  console.log(`[Recovery] Checking ${pending.length} pending multi-target order(s)...`);
+  for (const [orderId, meta] of pending) {
+    const key    = meta.acct === 'bull' ? process.env.ALPACA_KEY    : process.env.ALPACA_BEAR_KEY;
+    const secret = meta.acct === 'bull' ? process.env.ALPACA_SECRET : process.env.ALPACA_BEAR_SECRET;
+    if (!key || !secret) continue;
+    try {
+      const r = await fetch(`${ALPACA_BASE}/orders/${orderId}`, {
+        headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret }
+      });
+      if (!r.ok) continue;
+      const order = await r.json();
+      if (order.status === 'filled') {
+        console.log(`[Recovery][${meta.label}] Entry filled during downtime — placing exits for ${meta.symbol}`);
+        seenOrderIds.add(orderId); // prevent double-processing during seed
+        await placeMultiTargetExits(order, meta, key, secret);
+        saveOrderMetadata();
+      } else if (['canceled', 'expired'].includes(order.status)) {
+        delete orderMetadata[orderId];
+        saveOrderMetadata();
+      }
+    } catch(e) { console.error(`[Recovery] Error checking ${orderId}: ${e.message}`); }
+  }
+}
 
 async function seedAccount(key, secret) {
   if (!key || !secret) return;
@@ -691,6 +751,8 @@ setInterval(() => {
 
 app.listen(process.env.PORT || 3001, async () => {
   console.log('Server running');
-  await seedSeenOrders();
+  rebuildExitToEntry();               // restore reverse-map from persisted metadata
+  await recoverMultiTargetOrders();   // place exits for any fills that happened during downtime
+  await seedSeenOrders();             // seed remaining filled orders so we don't re-notify
   setInterval(pollFilledOrders, 30_000);
 });
