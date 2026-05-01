@@ -243,6 +243,21 @@
     </div>
     <div class="mode-desc" id="mode-desc">Manual: review each setup and place individually or all at once.</div>
 
+    <div class="mode-toggle" style="margin-bottom:8px;">
+      <button class="mode-btn active-manual" id="btn-ot-bracket" onclick="setOrderMode('bracket')">Bracket</button>
+      <div class="mode-divider"></div>
+      <button class="mode-btn" id="btn-ot-multi" onclick="setOrderMode('multi')">Multi-target</button>
+    </div>
+    <div id="multi-trail-opt" style="display:none; margin-bottom:1rem;">
+      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+        <div>
+          <div class="label">Trailing stop %</div>
+          <input type="number" id="trailPct" value="1.5" min="0.1" max="20" step="0.1" style="width:90px;" />
+        </div>
+        <p class="note" style="margin-top:0; flex:1; align-self:flex-end;">Entry fills → 1/3 at T1, 1/3 at T2, 1/3 trailing stop. T2 hit → stop moves to T1 price.</p>
+      </div>
+    </div>
+
     <div class="card">
       <div class="label">Watchlist text</div>
       <textarea id="watchlistInput" placeholder="INTC Bullish above 85 (TGT 85.50, 86, 86.85)&#10;AMD Bearish below 335 (TGT 332.50, 330, 326.02)&#10;..."></textarea>
@@ -295,6 +310,7 @@
 const PROXY = '';
 let parsedSetups = [];
 let mode = 'manual';
+let orderMode = 'bracket';
 let monitorCurrentFilter = 'all';
 const monitorCardData = {}; // keyed by "symbol_acct" — holds qty/isLong/tp/current for close panel
 
@@ -364,6 +380,15 @@ function setMode(m) {
     ? 'Manual: review each setup and place individually or all at once.'
     : 'Auto: setups are placed immediately after parsing — no review needed.';
   document.getElementById('action-bar').style.display = m === 'manual' ? 'flex' : 'none';
+}
+
+function setOrderMode(m) {
+  orderMode = m;
+  document.getElementById('btn-ot-bracket').className = 'mode-btn' + (m==='bracket' ? ' active-manual' : '');
+  document.getElementById('btn-ot-multi').className   = 'mode-btn' + (m==='multi'   ? ' active-auto'   : '');
+  document.getElementById('multi-trail-opt').style.display = m==='multi' ? '' : 'none';
+  const btn = document.getElementById('btn-place-all');
+  if (btn) btn.textContent = m==='multi' ? 'Place all multi-target orders' : 'Place all bracket orders';
 }
 
 // ── Watchlist parsing ────────────────────────────────────────────────────────
@@ -458,7 +483,9 @@ async function submitBracket(s) {
       trigger: s.trigger,
       targets: s.targets,
       maxDollars: parseFloat(document.getElementById('maxDollars').value) || 10000,
-      stopLossPct: parseFloat(document.getElementById('stopLossPct').value) || 3
+      stopLossPct: parseFloat(document.getElementById('stopLossPct').value) || 3,
+      mode: orderMode,
+      trailPct: parseFloat(document.getElementById('trailPct')?.value) || 1.5
     })
   });
   const d = await r.json();

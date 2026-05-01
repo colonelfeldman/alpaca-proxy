@@ -89,7 +89,7 @@ app.post('/trade', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { symbol, direction, trigger, targets, maxDollars, stopLossPct } = req.body;
+  const { symbol, direction, trigger, targets, maxDollars, stopLossPct, mode, trailPct } = req.body;
   if (!symbol || !direction || !trigger || !targets?.length) {
     return res.status(400).json({ error: 'Missing required fields: symbol, direction, trigger, targets' });
   }
@@ -113,37 +113,58 @@ app.post('/trade', async (req, res) => {
     : Math.round(trigger * (1 + slPct) * 100) / 100;
   const tp = targets[0];
 
-  const order = {
-    symbol: symbol.toUpperCase(), qty, side,
-    type: 'stop_limit',
-    stop_price: trigger,
-    limit_price: trigger,
-    time_in_force: 'day',
-    order_class: 'bracket',
-    take_profit: { limit_price: tp },
-    stop_loss: {
-      stop_price: sl,
-      limit_price: Math.round(sl * (isBull ? 0.995 : 1.005) * 100) / 100
-    }
-  };
+  const acctEmoji = label === 'BULL' ? '🟢' : '🔵';
+  const apiHeaders = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret_key, 'Content-Type': 'application/json' };
 
   try {
-    const r = await fetch(`${ALPACA_BASE}/orders`, {
-      method: 'POST',
-      headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret_key, 'Content-Type': 'application/json' },
-      body: JSON.stringify(order)
-    });
+    if (mode === 'multi') {
+      // Multi-target: plain stop_limit entry — exits placed by server after fill
+      const entryOrder = {
+        symbol: symbol.toUpperCase(), qty, side,
+        type: 'stop_limit', stop_price: trigger, limit_price: trigger,
+        time_in_force: 'day'
+      };
+      const r = await fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers: apiHeaders, body: JSON.stringify(entryOrder) });
+      const d = await r.json();
+      if (!r.ok) {
+        const reason = d.message || JSON.stringify(d);
+        console.error(`[${label}] Trade rejected: ${side} ${symbol} — ${reason}`);
+        await sendTelegram(`🟥✖️ ${acctEmoji} [${label}] Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
+        return res.status(r.status).json({ error: reason });
+      }
+      const t2 = targets.length > 1 ? targets[1] : null;
+      const trail = parseFloat(trailPct) || 1.5;
+      orderMetadata[d.id] = {
+        mode: 'multi', symbol: symbol.toUpperCase(), isBull, label,
+        target1: tp, target2: t2, trailPct: trail, stopLossPrice: sl,
+        acct: isBull ? 'bull' : 'bear', status: 'pending_fill', exitOrderIds: null, qty
+      };
+      console.log(`[${label}] Multi-target trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
+      await sendTelegram(`${acctEmoji} [${label}] Multi-target placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nT1 $${tp}${t2 ? ` · T2 $${t2}` : ''} · Trail ${trail}% · SL $${sl} ${acctEmoji}`);
+      return res.json({ ok: true, order: d, orderId: d.id });
+    }
+
+    // Bracket mode (default)
+    const order = {
+      symbol: symbol.toUpperCase(), qty, side,
+      type: 'stop_limit', stop_price: trigger, limit_price: trigger,
+      time_in_force: 'day', order_class: 'bracket',
+      take_profit: { limit_price: tp },
+      stop_loss: {
+        stop_price: sl,
+        limit_price: Math.round(sl * (isBull ? 0.995 : 1.005) * 100) / 100
+      }
+    };
+    const r = await fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers: apiHeaders, body: JSON.stringify(order) });
     const d = await r.json();
     if (!r.ok) {
       const reason = d.message || JSON.stringify(d);
       console.error(`[${label}] Trade rejected: ${side} ${symbol} — ${reason}`);
-      const acctEmoji = label === 'BULL' ? '🟢' : '🔵';
       await sendTelegram(`🟥✖️ ${acctEmoji} [${label}] Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
       return res.status(r.status).json({ error: reason });
     }
     console.log(`[${label}] Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
-    const placedEmoji = label === 'BULL' ? '🟢' : '🔵';
-    await sendTelegram(`${placedEmoji} [${label}] Order placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nTP $${tp} · SL $${sl} ${placedEmoji}`);
+    await sendTelegram(`${acctEmoji} [${label}] Order placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nTP $${tp} · SL $${sl} ${acctEmoji}`);
     res.json({ ok: true, order: d });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -156,6 +177,20 @@ app.post('/webhook/alpaca', async (req, res) => {
   const order = req.body?.data?.order || req.body?.order || req.body;
   if (!order || order.status !== 'filled') return;
   await sendTradeNotification(order, 'BULL');
+});
+
+// Store order metadata for multi-target exit management
+app.post('/alpaca/orders/metadata', (req, res) => {
+  const { orderId, mode, target1, target2, trailPct, stopLossPrice, acct, symbol, isBull } = req.body;
+  if (!orderId || !mode) return res.status(400).json({ error: 'orderId and mode required' });
+  orderMetadata[orderId] = {
+    mode, symbol, isBull, target1, target2,
+    trailPct: parseFloat(trailPct) || 1.5,
+    stopLossPrice, acct,
+    label: isBull ? 'BULL' : 'BEAR',
+    status: 'pending_fill', exitOrderIds: null
+  };
+  res.json({ ok: true });
 });
 
 // --- Schwab OAuth & Trading ---
@@ -436,9 +471,96 @@ async function sendTradeNotification(order, label) {
   catch (e) { console.error('Telegram error:', e.message); }
 }
 
+// --- Multi-target order management ---
+
+async function placeMultiTargetExits(entryOrder, meta, key, secret) {
+  const { symbol, target1, target2, trailPct, stopLossPrice, isBull, label } = meta;
+  const qty = parseInt(entryOrder.filled_qty || entryOrder.qty || meta.qty);
+  const share1 = Math.floor(qty / 3);
+  const share2 = Math.floor(qty / 3);
+  const share3 = qty - share1 - share2;
+  const side = isBull ? 'sell' : 'buy';
+  const headers = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret, 'Content-Type': 'application/json' };
+  const placed = { t1OrderId: null, t2OrderId: null, trailOrderId: null, slOrderId: null };
+
+  try {
+    if (target2) {
+      const [t1Res, t2Res, trailRes, slRes] = await Promise.all([
+        fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers,
+          body: JSON.stringify({ symbol, qty: String(share1), side, type: 'limit', limit_price: String(target1), time_in_force: 'day' }) }),
+        fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers,
+          body: JSON.stringify({ symbol, qty: String(share2), side, type: 'limit', limit_price: String(target2), time_in_force: 'day' }) }),
+        fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers,
+          body: JSON.stringify({ symbol, qty: String(share3), side, type: 'trailing_stop', trail_percent: String(trailPct), time_in_force: 'day' }) }),
+        fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers,
+          body: JSON.stringify({ symbol, qty: String(qty), side, type: 'stop', stop_price: String(stopLossPrice), time_in_force: 'day' }) })
+      ]);
+      const [t1d, t2d, trld, sld] = await Promise.all([t1Res.json(), t2Res.json(), trailRes.json(), slRes.json()]);
+      placed.t1OrderId = t1d.id; placed.t2OrderId = t2d.id;
+      placed.trailOrderId = trld.id; placed.slOrderId = sld.id;
+      await sendTelegram(`📐 [${label}] Multi exits for ${symbol}:\n1/3 (${share1}sh) limit @ $${target1}\n1/3 (${share2}sh) limit @ $${target2}\n1/3 (${share3}sh) trail ${trailPct}%\nSL ${qty}sh @ $${stopLossPrice}`);
+    } else {
+      // Single target: sell 2/3 at T1, 1/3 trailing
+      const twoThirds = share1 + share2;
+      const [t1Res, trailRes, slRes] = await Promise.all([
+        fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers,
+          body: JSON.stringify({ symbol, qty: String(twoThirds), side, type: 'limit', limit_price: String(target1), time_in_force: 'day' }) }),
+        fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers,
+          body: JSON.stringify({ symbol, qty: String(share3), side, type: 'trailing_stop', trail_percent: String(trailPct), time_in_force: 'day' }) }),
+        fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers,
+          body: JSON.stringify({ symbol, qty: String(qty), side, type: 'stop', stop_price: String(stopLossPrice), time_in_force: 'day' }) })
+      ]);
+      const [t1d, trld, sld] = await Promise.all([t1Res.json(), trailRes.json(), slRes.json()]);
+      placed.t1OrderId = t1d.id; placed.trailOrderId = trld.id; placed.slOrderId = sld.id;
+      await sendTelegram(`📐 [${label}] Multi exits for ${symbol}:\n2/3 (${twoThirds}sh) limit @ $${target1}\n1/3 (${share3}sh) trail ${trailPct}%\nSL ${qty}sh @ $${stopLossPrice}`);
+    }
+
+    meta.exitOrderIds = placed;
+    meta.status = 'exits_placed';
+    meta.filledQty = qty;
+    if (placed.t1OrderId)    exitToEntry[placed.t1OrderId]    = entryOrder.id;
+    if (placed.t2OrderId)    exitToEntry[placed.t2OrderId]    = entryOrder.id;
+    if (placed.trailOrderId) exitToEntry[placed.trailOrderId] = entryOrder.id;
+    if (placed.slOrderId)    exitToEntry[placed.slOrderId]    = entryOrder.id;
+  } catch(e) {
+    console.error(`[${label}] Multi-target exits error: ${e.message}`);
+    await sendTelegram(`⚠️ [${label}] Failed to place multi exits for ${symbol}: ${e.message}`).catch(() => {});
+  }
+}
+
+async function handleTarget2Fill(entryId, meta, key, secret) {
+  const { symbol, target1, label, exitOrderIds } = meta;
+  const qty = meta.filledQty || meta.qty;
+  const share3 = qty - 2 * Math.floor(qty / 3);
+  const side = meta.isBull ? 'sell' : 'buy';
+  const headers = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret, 'Content-Type': 'application/json' };
+
+  // Cancel the full-qty stop loss (now stale after T1 and T2 fills)
+  if (exitOrderIds?.slOrderId) {
+    try { await fetch(`${ALPACA_BASE}/orders/${exitOrderIds.slOrderId}`, { method: 'DELETE', headers }); }
+    catch(e) { console.error(`Cancel SL error: ${e.message}`); }
+  }
+
+  // Place new stop at T1 price for remaining share3
+  try {
+    const r = await fetch(`${ALPACA_BASE}/orders`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ symbol, qty: String(share3), side, type: 'stop', stop_price: String(target1), time_in_force: 'day' })
+    });
+    const d = await r.json();
+    if (d.id) { meta.exitOrderIds.slOrderId = d.id; exitToEntry[d.id] = entryId; }
+    meta.status = 'target2_filled';
+    await sendTelegram(`🎯 [${label}] T2 filled for ${symbol} — stop moved to T1 $${target1} for ${share3} shares`);
+  } catch(e) {
+    console.error(`[${label}] handleTarget2Fill error: ${e.message}`);
+  }
+}
+
 // --- Filled-order polling (every 30s, both accounts) ---
 
 const seenOrderIds = new Set();
+const orderMetadata = {}; // orderId → multi-target state
+const exitToEntry = {};   // exitOrderId → entryOrderId
 
 async function seedAccount(key, secret) {
   if (!key || !secret) return;
@@ -469,6 +591,22 @@ async function pollAccount(key, secret, label) {
     for (const order of orders) {
       if (seenOrderIds.has(order.id)) continue;
       seenOrderIds.add(order.id);
+
+      // Multi-target entry fill → place exit orders
+      const meta = orderMetadata[order.id];
+      if (meta && meta.mode === 'multi' && meta.status === 'pending_fill') {
+        await placeMultiTargetExits(order, meta, key, secret);
+      }
+
+      // Multi-target T2 fill → move stop to T1
+      const entryId = exitToEntry[order.id];
+      if (entryId) {
+        const entryMeta = orderMetadata[entryId];
+        if (entryMeta && order.id === entryMeta.exitOrderIds?.t2OrderId && entryMeta.status === 'exits_placed') {
+          await handleTarget2Fill(entryId, entryMeta, key, secret);
+        }
+      }
+
       await sendTradeNotification(order, label);
     }
   } catch (e) { console.error(`[${label}] Poll error:`, e.message); }
