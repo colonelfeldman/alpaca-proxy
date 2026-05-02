@@ -1,245 +1,481 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Alpaca Trading Agent</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Trading Agent</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --bg: #0f0f11; --surface: #1a1a1f; --border: #2a2a32; --text: #e8e8ed;
-    --muted: #6b6b7a; --accent: #4ade80; --accent-dim: rgba(74,222,128,0.12);
-    --red: #f87171; --red-dim: rgba(248,113,113,0.12); --amber: #fbbf24;
-    --amber-dim: rgba(251,191,36,0.12); --blue: #60a5fa; --blue-dim: rgba(96,165,250,0.12);
-    --radius: 10px; --font: 'DM Sans', sans-serif; --mono: 'DM Mono', monospace;
-  }
-  body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; padding: 2rem 1rem; }
-  .app { max-width: 860px; margin: 0 auto; }
-  header { display: flex; align-items: center; gap: 12px; margin-bottom: 2rem; }
-  header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
-  header .sub { font-size: 13px; color: var(--muted); margin-left: 4px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; margin-right: 8px; box-shadow: 0 0 8px var(--accent); }
-  .tabs { display: flex; gap: 4px; margin-bottom: 1.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px; width: fit-content; }
-  .tab { border: none; background: transparent; color: var(--muted); font-family: var(--font); font-size: 13px; font-weight: 500; padding: 7px 18px; border-radius: 7px; cursor: pointer; transition: all 0.15s; }
-  .tab:hover { color: var(--text); }
-  .tab.active { background: #2a2a35; color: var(--text); }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1rem; }
-  .label { font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px; }
-  input, textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; font-size: 13px; font-family: var(--mono); color: var(--text); outline: none; transition: border-color 0.15s; }
-  input:focus, textarea:focus { border-color: #444; }
-  textarea { min-height: 130px; resize: vertical; line-height: 1.6; }
-  .row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
-  button { cursor: pointer; font-family: var(--font); font-size: 13px; font-weight: 500; border-radius: 8px; padding: 9px 18px; transition: all 0.15s; }
-  .btn { background: #2a2a35; border: 1px solid var(--border); color: var(--text); }
-  .btn:hover { background: #33333f; }
-  .btn-primary { background: var(--accent); border: none; color: #0a1a0f; }
-  .btn-primary:hover { opacity: 0.88; }
-  .btn-danger { background: var(--red-dim); border: 1px solid rgba(248,113,113,0.3); color: var(--red); }
-  .btn-danger:hover { background: rgba(248,113,113,0.2); }
-  .btn-success { background: var(--accent-dim); border: 1px solid rgba(74,222,128,0.3); color: var(--accent); }
-  .btn-success:hover { background: rgba(74,222,128,0.2); }
-  .btn-sm { padding: 6px 12px; font-size: 12px; }
-  .msg { font-size: 12px; padding: 9px 12px; border-radius: 8px; margin-top: 10px; font-family: var(--mono); }
-  .msg-ok { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(74,222,128,0.2); }
-  .msg-err { background: var(--red-dim); color: var(--red); border: 1px solid rgba(248,113,113,0.2); }
-  .msg-info { background: var(--blue-dim); color: var(--blue); border: 1px solid rgba(96,165,250,0.2); }
-  .acct-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 1rem; }
-  .acct-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
-  .acct-title { font-size: 12px; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
-  .acct-row { display: flex; justify-content: space-between; font-size: 12px; font-family: var(--mono); padding: 3px 0; color: var(--muted); }
-  .acct-row span:last-child { color: var(--text); }
-  .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
-  .badge-bull { background: var(--accent-dim); color: var(--accent); }
-  .badge-bear { background: var(--red-dim); color: var(--red); }
-  .badge-new { background: var(--amber-dim); color: var(--amber); }
-  .badge-filled { background: var(--accent-dim); color: var(--accent); }
-  .badge-canceled { background: #2a2a35; color: var(--muted); }
-  .badge-placed { background: var(--accent-dim); color: var(--accent); }
-  .badge-error { background: var(--red-dim); color: var(--red); }
-  .badge-pending { background: var(--amber-dim); color: var(--amber); }
-  .setup-row { display: grid; grid-template-columns: 56px 76px 1fr 80px 160px; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
-  .setup-row:last-child { border-bottom: none; }
-  .setup-row.placed-row { opacity: 0.4; }
-  .symbol { font-family: var(--mono); font-weight: 500; font-size: 14px; }
-  .detail { font-size: 11px; color: var(--muted); font-family: var(--mono); line-height: 1.8; }
-  .detail .tgt { color: var(--accent); }
-  .detail .sl { color: var(--red); }
-  .trade-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-  .trade-row:last-child { border-bottom: none; }
-  .order-detail { font-size: 11px; color: var(--muted); flex: 1; font-family: var(--mono); line-height: 1.8; }
-  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 5px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 2.5rem 0; font-family: var(--mono); }
-  .note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.6; }
-  .spacer { margin-bottom: 12px; }
-  .col-header { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 8px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: 56px 76px 1fr 80px 160px; gap: 10px; margin-bottom: 2px; }
-  .btn-schwab { background: rgba(251,191,36,0.15); border: 1px solid rgba(251,191,36,0.4); color: var(--amber); }
-  .btn-schwab:hover { background: rgba(251,191,36,0.25); }
-  .btn-schwab:disabled { opacity: 0.4; cursor: not-allowed; }
-  .settings-row { display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
-  .settings-row > div { display: flex; flex-direction: column; }
-  .settings-row input { width: 90px; }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#0d0d0f; --surface:#141418; --border:#1e1e24;
+  --text:#e8e8ed; --muted:#6b6b7a;
+  --cyan:#22d3ee; --green:#4ade80; --red:#f87171;
+  --amber:#fbbf24; --blue:#60a5fa; --orange:#fb923c;
+  --radius:10px; --font:'DM Sans',sans-serif; --mono:'DM Mono',monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;}
 
-  /* Mode toggle */
-  .mode-toggle { display: flex; align-items: center; gap: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; margin-bottom: 1rem; }
-  .mode-btn { border: none; background: transparent; color: var(--muted); font-family: var(--font); font-size: 13px; font-weight: 500; padding: 8px 20px; cursor: pointer; transition: all 0.15s; }
-  .mode-btn.active-manual { background: var(--blue-dim); color: var(--blue); }
-  .mode-btn.active-auto { background: var(--accent-dim); color: var(--accent); }
-  .mode-divider { width: 1px; background: var(--border); height: 36px; }
-  .mode-desc { font-size: 12px; color: var(--muted); margin-bottom: 1rem; font-family: var(--mono); }
+/* ── Settings Panel ─────────────────────────────────────────────────────── */
+.settings-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:90;display:none;}
+.settings-backdrop.open{display:block;}
+.settings-panel{position:fixed;top:0;left:0;bottom:0;width:320px;max-width:90vw;background:var(--surface);border-right:1px solid var(--border);z-index:100;transform:translateX(-100%);transition:transform .25s ease;overflow-y:auto;padding:1.5rem;}
+.settings-panel.open{transform:translateX(0);}
+.settings-title{font-size:15px;font-weight:600;margin-bottom:1.5rem;display:flex;justify-content:space-between;align-items:center;}
+.settings-close{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:4px;}
+.settings-group{margin-bottom:1.25rem;}
+.settings-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;}
+.settings-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;font-family:var(--mono);color:var(--text);outline:none;}
+.settings-input:focus{border-color:#333;}
+.settings-divider{border:none;border-top:1px solid var(--border);margin:1rem 0;}
+.toggle-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;}
+.toggle-label{font-size:13px;color:var(--text);}
+.toggle{position:relative;width:40px;height:22px;flex-shrink:0;}
+.toggle input{opacity:0;width:0;height:0;}
+.toggle-slider{position:absolute;inset:0;background:#2a2a35;border-radius:22px;cursor:pointer;transition:.2s;}
+.toggle-slider::before{content:'';position:absolute;width:16px;height:16px;left:3px;bottom:3px;background:var(--muted);border-radius:50%;transition:.2s;}
+.toggle input:checked+.toggle-slider{background:var(--green);}
+.toggle input:checked+.toggle-slider::before{transform:translateX(18px);background:#0a1a0f;}
 
-  /* Action bar */
-  .action-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }
-  .btn-place-all { background: var(--accent); border: none; color: #0a1a0f; font-weight: 600; }
-  .btn-place-all:hover { opacity: 0.88; }
-  .btn-place-all:disabled { opacity: 0.4; cursor: not-allowed; }
+/* ── Nav ────────────────────────────────────────────────────────────────── */
+.nav{display:flex;align-items:center;gap:0;height:52px;border-bottom:1px solid var(--border);padding:0 16px;position:sticky;top:0;background:var(--bg);z-index:50;}
+.nav-gear{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:8px;margin-right:8px;border-radius:8px;transition:color .15s;}
+.nav-gear:hover{color:var(--text);}
+.nav-brand{font-size:15px;font-weight:600;letter-spacing:-.2px;margin-right:24px;white-space:nowrap;}
+.nav-tabs{display:flex;gap:0;flex:1;overflow-x:auto;scrollbar-width:none;}
+.nav-tabs::-webkit-scrollbar{display:none;}
+.nav-tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-family:var(--font);font-size:13px;font-weight:500;padding:0 14px;height:52px;cursor:pointer;white-space:nowrap;transition:color .15s;flex-shrink:0;}
+.nav-tab:hover{color:var(--text);}
+.nav-tab.active{color:var(--text);border-bottom-color:var(--green);}
+.nav-right{display:flex;align-items:center;gap:8px;margin-left:auto;flex-shrink:0;}
+.nav-countdown{font-family:var(--mono);font-size:12px;color:var(--muted);}
+.nav-countdown.open{color:var(--green);}
+.btn-alpaca{background:none;border:1px solid var(--border);color:var(--muted);font-size:12px;border-radius:6px;padding:5px 10px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:4px;}
+.btn-alpaca:hover{color:var(--text);border-color:#333;}
+.pill-paper{background:rgba(251,191,36,.12);color:var(--amber);font-size:10px;font-weight:600;border-radius:20px;padding:2px 8px;letter-spacing:.4px;}
 
-  /* ── Monitor tab ──────────────────────────────────────────────────────────── */
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+.page{max-width:1080px;margin:0 auto;padding:1.25rem 1rem;}
 
-  /* Top bar: filter toggles left, Refresh right */
-  .monitor-topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; gap: 10px; }
+/* ── Metrics row ────────────────────────────────────────────────────────── */
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.25rem;}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;}
+.metric-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;}
+.metric-val{font-family:var(--mono);font-size:22px;font-weight:600;}
+.metric-sub{font-size:11px;color:var(--muted);margin-top:3px;font-family:var(--mono);}
 
-  /* Filter toggle bar */
-  .filter-bar { display: flex; gap: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 3px; }
-  .filter-btn { border: none; background: transparent; color: var(--muted); font-family: var(--font); font-size: 12px; font-weight: 500; padding: 6px 13px; border-radius: 7px; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
-  .filter-btn:hover { color: var(--text); }
-  .filter-btn.active { background: #2a2a35; color: var(--text); }
+/* ── Control row ────────────────────────────────────────────────────────── */
+.control-row{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap;}
+select{background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px;padding:7px 10px;outline:none;cursor:pointer;}
+select:focus{border-color:#333;}
+input[type="date"]{background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 10px;outline:none;}
+input[type="date"]:focus{border-color:#333;}
+.btn-refresh{background:none;border:1px solid var(--border);color:var(--muted);font-size:13px;border-radius:8px;padding:7px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
+.btn-refresh:hover{color:var(--text);border-color:#333;}
 
-  /* Responsive grid for cards */
-  .monitor-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: start; }
+/* ── Trade cards grid ───────────────────────────────────────────────────── */
+.cards-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 
-  /* Individual monitor card */
-  .mon-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; display: flex; flex-direction: column; gap: 10px; }
-  .mon-header { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-  .mon-sym { font-family: var(--mono); font-size: 18px; font-weight: 600; margin-right: 2px; }
-  .mon-prices { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
-  .mon-price { font-family: var(--mono); font-size: 20px; font-weight: 600; line-height: 1.1; }
-  .mon-entry { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 3px; }
-  .mon-pnl { font-family: var(--mono); font-size: 15px; font-weight: 600; text-align: right; line-height: 1.4; flex-shrink: 0; }
-  .mon-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-  .mon-stat { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
-  .mon-stat-label { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-  .mon-stat-val { font-family: var(--mono); font-size: 13px; font-weight: 500; }
-  .mon-stat-dist { font-size: 11px; font-family: var(--mono); color: var(--muted); margin-top: 2px; }
-  .mon-dist { font-family: var(--mono); font-size: 13px; color: var(--amber); text-align: right; flex-shrink: 0; }
+/* ── Card base ──────────────────────────────────────────────────────────── */
+.trade-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative;}
+.trade-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;}
+.trade-card.bull::before{background:var(--blue);}
+.trade-card.bear::before{background:var(--orange);}
+.trade-card.bull{border-color:rgba(96,165,250,.28);}
+.trade-card.bear{border-color:rgba(251,146,60,.28);}
+.trade-card.closed-card{opacity:.62;}
+.card-inner{padding:14px 14px 14px 17px;}
 
-  /* Expandable close panel */
-  .close-trigger { width: 100%; }
-  .close-panel { display: none; flex-direction: column; gap: 8px; padding: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
-  .close-panel.open { display: flex; }
-  .close-panel-row { display: flex; gap: 6px; align-items: center; }
-  .close-panel-row input { flex: 1; padding: 7px 10px; font-size: 13px; }
-  .close-panel-actions { display: flex; gap: 6px; }
-  .close-panel-actions .btn-danger { flex: 1; }
+/* card header */
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:10px;}
+.card-sym{font-family:var(--mono);font-size:20px;font-weight:600;line-height:1;}
+.card-badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px;}
+.card-price{text-align:right;flex-shrink:0;}
+.card-price-val{font-family:var(--mono);font-size:20px;font-weight:600;}
+.card-pnl{font-family:var(--mono);font-size:12px;text-align:right;margin-top:2px;}
 
-  /* Mobile */
-  @media (max-width: 768px) {
-    html, body { overflow-x: hidden; }
-    body { padding: 1rem 0.75rem; }
-    .tabs { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
-    .tabs::-webkit-scrollbar { display: none; }
-    .tab { white-space: nowrap; flex-shrink: 0; padding: 9px 16px; min-height: 44px; font-size: 14px; }
-    button { min-height: 44px; font-size: 14px; }
-    .btn-sm { min-height: 40px; padding: 8px 14px; font-size: 13px; }
-    input, textarea { font-size: 16px; }
-    .row { flex-direction: column; align-items: stretch; }
-    .row button { width: 100%; }
-    .settings-row { flex-direction: column; gap: 14px; }
-    .settings-row > div { width: 100%; }
-    .settings-row input { width: 100%; }
-    .acct-grid { grid-template-columns: 1fr; }
-    .mode-toggle { width: 100%; }
-    .mode-btn { flex: 1; text-align: center; padding: 10px 12px; min-height: 44px; }
-    .action-bar { flex-direction: column; align-items: stretch; }
-    .action-bar button { width: 100%; min-height: 48px; font-size: 15px; }
-    .col-header { display: none; }
-    .setup-row {
-      display: grid;
-      grid-template-columns: auto 1fr auto;
-      grid-template-rows: auto auto auto;
-      gap: 6px 10px;
-      align-items: center;
-      padding: 14px 0;
-    }
-    .setup-row > *:nth-child(1) { grid-column: 1; grid-row: 1; }
-    .setup-row > *:nth-child(2) { grid-column: 2; grid-row: 1; justify-self: start; }
-    .setup-row > *:nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
-    .setup-row > *:nth-child(4) { grid-column: 1; grid-row: 3; }
-    .setup-row > *:nth-child(5) { grid-column: 2 / -1; grid-row: 3; justify-self: end; }
-    .trade-row { flex-direction: column; gap: 8px; }
-    .trade-row > div:last-child { align-self: flex-start; }
-    #tab-orders > .row { margin-bottom: 1rem; }
+/* badges */
+.badge{display:inline-flex;align-items:center;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap;letter-spacing:.2px;}
+.badge-bull{background:rgba(96,165,250,.12);color:var(--blue);}
+.badge-bear{background:rgba(251,146,60,.12);color:var(--orange);}
+.badge-active{background:rgba(74,222,128,.12);color:var(--green);}
+.badge-pending{background:rgba(251,191,36,.12);color:var(--amber);}
+.badge-closed{background:#1e1e24;color:var(--muted);}
+.badge-win{background:rgba(74,222,128,.12);color:var(--green);}
+.badge-loss{background:rgba(248,113,113,.12);color:var(--red);}
+.badge-filled{background:rgba(74,222,128,.12);color:var(--green);}
+.badge-gray{background:#1e1e24;color:var(--muted);}
 
-    /* Monitor mobile: 2-column grid */
-    .monitor-grid { grid-template-columns: repeat(2, 1fr); gap: 9px; }
-    .monitor-topbar { flex-wrap: wrap; }
-    .filter-bar { flex: 1; }
-    .filter-btn { flex: 1; text-align: center; padding: 6px 6px; font-size: 11px; }
-    .mon-sym { font-size: 15px; }
-    .mon-price { font-size: 17px; }
-    .mon-pnl { font-size: 13px; }
-    .mon-stat-val { font-size: 12px; }
-  }
+/* card body */
+.card-stats{display:flex;gap:16px;font-size:12px;font-family:var(--mono);color:var(--muted);margin-bottom:10px;flex-wrap:wrap;}
+.card-stats span{color:var(--text);}
+
+/* price bar */
+.price-bar-wrap{margin-bottom:10px;}
+.price-bar-track{position:relative;height:4px;background:#1e1e24;border-radius:2px;margin:18px 0 22px;}
+.pb-marker{position:absolute;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:3px;}
+.pb-marker-dot{width:8px;height:8px;border-radius:50%;margin-top:-2px;}
+.pb-marker-label{font-size:9px;font-family:var(--mono);color:var(--muted);white-space:nowrap;position:absolute;top:10px;}
+.pb-marker.sl .pb-marker-dot{background:var(--red);}
+.pb-marker.entry .pb-marker-dot{background:var(--text);}
+.pb-marker.entry .pb-marker-label{top:10px;}
+.pb-marker.target .pb-marker-dot{background:var(--green);}
+.pb-marker.current{z-index:2;}
+.pb-marker.current .pb-marker-dot{width:10px;height:10px;background:white;box-shadow:0 0 6px rgba(255,255,255,.5);margin-top:-3px;}
+.pb-marker.current .pb-marker-label{top:-18px;color:var(--text);font-weight:500;}
+
+/* legs section */
+.legs-toggle{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;padding:6px 0;border-top:1px solid var(--border);user-select:none;}
+.legs-toggle:hover{color:var(--text);}
+.legs-body{display:none;gap:6px;flex-direction:column;padding:8px 0;}
+.legs-body.open{display:flex;}
+.leg-row{display:flex;align-items:center;gap:8px;font-size:12px;font-family:var(--mono);background:var(--bg);border-radius:8px;padding:8px 10px;}
+.leg-label{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;width:24px;flex-shrink:0;}
+.leg-price{flex:1;color:var(--text);}
+.leg-shares{color:var(--muted);}
+.leg-pnl{text-align:right;font-weight:500;}
+.leg-progress{height:3px;background:#1e1e24;border-radius:2px;margin-top:4px;}
+.leg-progress-fill{height:100%;border-radius:2px;background:var(--green);transition:width .4s;}
+
+/* card actions */
+.card-actions{display:flex;gap:6px;margin-top:10px;}
+.btn-close-pos{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);color:var(--red);font-size:12px;font-weight:600;border-radius:8px;padding:7px 12px;cursor:pointer;flex:1;transition:background .15s;}
+.btn-close-pos:hover{background:rgba(248,113,113,.2);}
+.btn-cancel-ord{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.25);color:var(--amber);font-size:12px;font-weight:600;border-radius:8px;padding:7px 12px;cursor:pointer;width:100%;transition:background .15s;}
+.btn-cancel-ord:hover{background:rgba(251,191,36,.2);}
+.close-expand{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px;display:none;flex-direction:column;gap:8px;}
+.close-expand.open{display:flex;}
+.close-row{display:flex;gap:6px;align-items:center;}
+.close-row input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;font-family:var(--mono);color:var(--text);outline:none;}
+.btn-mkt{background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.3);color:var(--red);font-size:12px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;}
+.btn-lmt{background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.25);color:var(--blue);font-size:12px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;}
+.btn-x{background:none;border:1px solid var(--border);color:var(--muted);font-size:12px;border-radius:8px;padding:7px 10px;cursor:pointer;}
+
+/* pending distance */
+.pending-dist{font-family:var(--mono);font-size:12px;color:var(--amber);margin-bottom:8px;}
+
+/* closed pnl banner */
+.pnl-banner{padding:10px 14px;font-family:var(--mono);font-size:14px;font-weight:600;display:flex;justify-content:space-between;align-items:center;}
+.pnl-banner.win{background:rgba(74,222,128,.08);}
+.pnl-banner.loss{background:rgba(248,113,113,.08);}
+
+/* empty state */
+.empty{color:var(--muted);font-size:13px;text-align:center;padding:3rem 0;font-family:var(--mono);}
+
+/* spinner */
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:4px;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* msg */
+.msg{font-size:12px;padding:9px 12px;border-radius:8px;margin-top:8px;font-family:var(--mono);}
+.msg-ok{background:rgba(74,222,128,.1);color:var(--green);border:1px solid rgba(74,222,128,.2);}
+.msg-err{background:rgba(248,113,113,.1);color:var(--red);border:1px solid rgba(248,113,113,.2);}
+.msg-info{background:rgba(96,165,250,.1);color:var(--blue);border:1px solid rgba(96,165,250,.2);}
+.msg-amber{background:rgba(251,191,36,.1);color:var(--amber);border:1px solid rgba(251,191,36,.2);}
+
+/* ── Summary tab ────────────────────────────────────────────────────────── */
+.date-range{display:flex;gap:4px;margin-bottom:1rem;flex-wrap:wrap;}
+.dr-btn{background:none;border:1px solid var(--border);color:var(--muted);font-size:12px;border-radius:6px;padding:5px 12px;cursor:pointer;}
+.dr-btn:hover{color:var(--text);}
+.dr-btn.active{background:var(--surface);color:var(--text);border-color:#333;}
+.sum-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1rem;}
+.sum-two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1.25rem;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;}
+.card-title{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:1rem;}
+.stat-row{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid var(--border);}
+.stat-row:last-child{border-bottom:none;}
+.stat-label{color:var(--muted);}
+.win-bar{height:6px;background:#1e1e24;border-radius:3px;overflow:hidden;margin:8px 0;}
+.win-bar-fill{height:100%;background:var(--green);border-radius:3px;transition:width .5s;}
+.side-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.side-card{border-radius:8px;padding:12px;}
+.side-card.bull-side{background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.2);}
+.side-card.bear-side{background:rgba(251,146,60,.06);border:1px solid rgba(251,146,60,.2);}
+.side-card-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;}
+.side-card.bull-side .side-card-title{color:var(--blue);}
+.side-card.bear-side .side-card-title{color:var(--orange);}
+.side-stat{display:flex;justify-content:space-between;font-size:12px;font-family:var(--mono);padding:3px 0;}
+.side-stat .sk{color:var(--muted);}
+
+/* comparison */
+.comp-table{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono);}
+.comp-table th{text-align:left;color:var(--muted);font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:.5px;padding:8px;border-bottom:1px solid var(--border);}
+.comp-table td{padding:8px;border-bottom:1px solid var(--border);color:var(--text);}
+.comp-table tr:last-child td{border-bottom:none;}
+.upload-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:2rem;text-align:center;cursor:pointer;transition:border-color .15s;margin-bottom:.75rem;}
+.upload-zone:hover{border-color:#333;}
+.upload-zone input{display:none;}
+.upload-label{color:var(--muted);font-size:13px;}
+
+/* trade list */
+.trade-list-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;}
+.trade-list-row:last-child{border-bottom:none;}
+.tl-sym{font-family:var(--mono);font-weight:600;width:56px;flex-shrink:0;}
+.tl-meta{flex:1;font-size:11px;color:var(--muted);font-family:var(--mono);}
+.tl-pnl{font-family:var(--mono);font-weight:600;text-align:right;}
+
+/* ── Watchlist tab ──────────────────────────────────────────────────────── */
+.mode-toggle{display:flex;background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:hidden;width:fit-content;margin-bottom:1rem;}
+.mode-btn{background:none;border:none;color:var(--muted);font-family:var(--font);font-size:13px;font-weight:500;padding:8px 18px;cursor:pointer;transition:all .15s;}
+.mode-divider{width:1px;background:var(--border);}
+.mode-btn.active-manual{background:rgba(96,165,250,.12);color:var(--blue);}
+.mode-btn.active-auto{background:rgba(74,222,128,.12);color:var(--green);}
+.mode-desc{font-size:12px;color:var(--muted);margin-bottom:1rem;font-family:var(--mono);}
+textarea{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;font-family:var(--mono);color:var(--text);outline:none;min-height:130px;resize:vertical;line-height:1.6;}
+textarea:focus{border-color:#333;}
+input[type=number]{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;font-family:var(--mono);color:var(--text);outline:none;width:90px;}
+input[type=number]:focus{border-color:#333;}
+.row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;}
+button{cursor:pointer;font-family:var(--font);}
+.btn{background:#1e1e24;border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:500;border-radius:8px;padding:8px 16px;transition:background .15s;}
+.btn:hover{background:#252530;}
+.btn-primary{background:var(--green);border:none;color:#0a1a0f;font-size:13px;font-weight:600;border-radius:8px;padding:8px 16px;}
+.btn-primary:hover{opacity:.88;}
+.btn-danger{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);color:var(--red);font-size:12px;border-radius:8px;padding:6px 12px;}
+.btn-danger:hover{background:rgba(248,113,113,.2);}
+.btn-success{background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);color:var(--green);font-size:12px;border-radius:8px;padding:6px 12px;}
+.btn-success:hover{background:rgba(74,222,128,.2);}
+.btn-amber{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.25);color:var(--amber);font-size:12px;border-radius:8px;padding:6px 12px;}
+.btn-amber:hover{background:rgba(251,191,36,.2);}
+.btn-sm{padding:5px 10px;font-size:12px;}
+.col-header{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;padding-bottom:8px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:56px 76px 1fr 80px 160px;gap:10px;margin-bottom:2px;}
+.setup-row{display:grid;grid-template-columns:56px 76px 1fr 80px 160px;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);}
+.setup-row:last-child{border-bottom:none;}
+.setup-row.placed-row{opacity:.4;}
+.symbol{font-family:var(--mono);font-weight:500;font-size:13px;}
+.detail{font-size:11px;color:var(--muted);font-family:var(--mono);line-height:1.8;}
+.detail .tgt{color:var(--green);}
+.detail .sl{color:var(--red);}
+.action-bar{display:flex;gap:8px;align-items:center;margin-top:1rem;flex-wrap:wrap;}
+
+/* ── Orders tab ─────────────────────────────────────────────────────────── */
+.orders-row{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;}
+.orders-row:last-child{border-bottom:none;}
+.ord-sym{font-family:var(--mono);font-weight:500;font-size:14px;width:52px;flex-shrink:0;}
+.ord-detail{font-size:11px;color:var(--muted);flex:1;font-family:var(--mono);line-height:1.8;}
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+@media(max-width:767px){
+  .metrics{grid-template-columns:1fr 1fr;}
+  .cards-grid{grid-template-columns:1fr;}
+  .sum-metrics{grid-template-columns:1fr 1fr;}
+  .sum-two-col{grid-template-columns:1fr;}
+  .nav-tab{font-size:12px;padding:0 10px;}
+  .nav-brand{display:none;}
+  button{min-height:44px;}
+  .btn-sm{min-height:36px;}
+  .col-header{display:none;}
+  .setup-row{grid-template-columns:auto 1fr auto;grid-template-rows:auto auto auto;gap:6px 10px;padding:12px 0;}
+  .setup-row>*:nth-child(1){grid-column:1;grid-row:1;}
+  .setup-row>*:nth-child(2){grid-column:2;grid-row:1;}
+  .setup-row>*:nth-child(3){grid-column:1/-1;grid-row:2;}
+  .setup-row>*:nth-child(4){grid-column:1;grid-row:3;}
+  .setup-row>*:nth-child(5){grid-column:2/-1;grid-row:3;justify-self:end;}
+  .row{flex-direction:column;}
+  .row button{width:100%;}
+  .action-bar{flex-direction:column;}
+  .action-bar button{width:100%;}
+  input[type=number]{width:100%;}
+  .side-cards{grid-template-columns:1fr;}
+  .date-range{gap:3px;}
+  .dr-btn{padding:5px 8px;font-size:11px;}
+}
+@media(min-width:768px){
+  textarea{font-size:13px;}
+}
 </style>
 </head>
 <body>
-<div class="app">
-  <header>
-    <h1><span class="dot"></span>Trading Agent</h1>
-    <span class="sub">Alpaca Paper Trading</span>
-  </header>
 
-  <div class="tabs">
-    <button class="tab active" onclick="showTab('setup')">Setup</button>
-    <button class="tab" onclick="showTab('watchlist')">Watchlist</button>
-    <button class="tab" onclick="showTab('orders')">Orders</button>
-    <button class="tab" onclick="showTab('monitor')">Monitor</button>
+<!-- Settings backdrop -->
+<div class="settings-backdrop" id="settingsBackdrop" onclick="closeSettings()"></div>
+
+<!-- Settings panel -->
+<div class="settings-panel" id="settingsPanel">
+  <div class="settings-title">
+    Settings
+    <button class="settings-close" onclick="closeSettings()">✕</button>
   </div>
 
-  <!-- SETUP -->
-  <div id="tab-setup">
-    <div class="card">
-      <div class="label">Order settings</div>
-      <div class="settings-row">
-        <div>
-          <div class="label">Max dollars per trade</div>
-          <input type="number" id="maxDollars" value="10000" min="1" />
-        </div>
-        <div>
-          <div class="label">Stop loss % from trigger</div>
-          <input type="number" id="stopLossPct" value="3" min="0.1" max="20" step="0.1" />
-        </div>
-      </div>
-      <p class="note">Shares = floor(maxDollars ÷ trigger price). Stop loss is calculated from the trigger: 3% below for bulls, 3% above for bears. API keys are stored securely on the server — no setup needed on each device.</p>
-      <div class="row">
-        <button class="btn-primary btn" onclick="checkAccounts()">Check account status</button>
-      </div>
-      <div id="conn-msg"></div>
-    </div>
-
-    <div class="acct-grid" id="acct-grid" style="display:none;">
-      <div class="acct-card">
-        <div class="acct-title"><span class="badge badge-bull">▲ BULL</span></div>
-        <div class="acct-row"><span>Portfolio</span><span id="bull-equity">—</span></div>
-        <div class="acct-row"><span>Buying power</span><span id="bull-bp">—</span></div>
-        <div class="acct-row"><span>Open P&amp;L</span><span id="bull-pnl">—</span></div>
-      </div>
-      <div class="acct-card">
-        <div class="acct-title"><span class="badge badge-bear">▼ BEAR</span></div>
-        <div class="acct-row"><span>Portfolio</span><span id="bear-equity">—</span></div>
-        <div class="acct-row"><span>Buying power</span><span id="bear-bp">—</span></div>
-        <div class="acct-row"><span>Open P&amp;L</span><span id="bear-pnl">—</span></div>
-      </div>
-    </div>
+  <div class="settings-group">
+    <div class="settings-label">Alpaca API Key</div>
+    <input class="settings-input" type="password" id="s-apiKey" placeholder="PK..."/>
   </div>
-
-  <!-- WATCHLIST -->
-  <div id="tab-watchlist" style="display:none;">
-    <div class="mode-toggle">
-      <button class="mode-btn active-manual" id="btn-mode-manual" onclick="setMode('manual')">👁 Manual review</button>
+  <div class="settings-group">
+    <div class="settings-label">Alpaca Secret Key</div>
+    <input class="settings-input" type="password" id="s-apiSecret" placeholder="Secret..."/>
+  </div>
+  <hr class="settings-divider"/>
+  <div class="settings-group">
+    <div class="settings-label">Max dollars per trade</div>
+    <input class="settings-input" type="number" id="s-maxDollars" value="10000"/>
+  </div>
+  <div class="settings-group">
+    <div class="settings-label">Stop loss %</div>
+    <input class="settings-input" type="number" id="s-stopLossPct" value="3" step="0.1"/>
+  </div>
+  <div class="settings-group">
+    <div class="settings-label">Trailing stop %</div>
+    <input class="settings-input" type="number" id="s-trailPct" value="1.5" step="0.1"/>
+  </div>
+  <div class="settings-group">
+    <div class="settings-label">Default order mode</div>
+    <div class="mode-toggle" style="width:100%;">
+      <button class="mode-btn active-manual" id="s-bracket-btn" onclick="setSettingsOrderMode('bracket')" style="flex:1;text-align:center;">Bracket</button>
       <div class="mode-divider"></div>
-      <button class="mode-btn" id="btn-mode-auto" onclick="setMode('auto')">⚡ Auto place all</button>
+      <button class="mode-btn" id="s-multi-btn" onclick="setSettingsOrderMode('multi')" style="flex:1;text-align:center;">Multi-target</button>
+    </div>
+  </div>
+  <hr class="settings-divider"/>
+  <div class="toggle-row">
+    <span class="toggle-label">Telegram notifications</span>
+    <label class="toggle"><input type="checkbox" id="s-telegram" checked/><span class="toggle-slider"></span></label>
+  </div>
+  <div class="toggle-row">
+    <span class="toggle-label">Push notifications</span>
+    <label class="toggle"><input type="checkbox" id="s-push"/><span class="toggle-slider"></span></label>
+  </div>
+  <div class="toggle-row">
+    <span class="toggle-label">Sound alerts</span>
+    <label class="toggle"><input type="checkbox" id="s-sound"/><span class="toggle-slider"></span></label>
+  </div>
+  <hr class="settings-divider"/>
+  <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
+    <button class="btn-primary btn" onclick="saveSettings()" style="width:100%;">Save settings</button>
+    <button class="btn" onclick="testConnection()" style="width:100%;">Test connection</button>
+  </div>
+  <div id="settings-msg" style="margin-top:8px;"></div>
+</div>
+
+<!-- Nav -->
+<nav class="nav">
+  <button class="nav-gear" onclick="openSettings()" title="Settings">⚙</button>
+  <div class="nav-brand">⬡ Trading Agent</div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" id="tab-dashboard" onclick="showTab('dashboard')">Dashboard</button>
+    <button class="nav-tab" id="tab-summary" onclick="showTab('summary')">Summary</button>
+    <button class="nav-tab" id="tab-watchlist" onclick="showTab('watchlist')">Watchlist</button>
+    <button class="nav-tab" id="tab-orders" onclick="showTab('orders')">Orders</button>
+  </div>
+  <div class="nav-right">
+    <span class="nav-countdown" id="mkt-countdown">–</span>
+    <a href="https://app.alpaca.markets" target="_blank" class="btn-alpaca">Alpaca ↗</a>
+    <span class="pill-paper">PAPER</span>
+  </div>
+</nav>
+
+<!-- Page -->
+<div class="page">
+
+  <!-- Metrics row -->
+  <div class="metrics" id="metrics-row">
+    <div class="metric">
+      <div class="metric-label">Portfolio</div>
+      <div class="metric-val" id="m-portfolio" style="color:var(--cyan);">—</div>
+      <div class="metric-sub" id="m-portfolio-sub">Bull account</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Buying Power</div>
+      <div class="metric-val" id="m-bp" style="color:var(--cyan);">—</div>
+      <div class="metric-sub" id="m-bp-sub">Available</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Unrealized P&amp;L</div>
+      <div class="metric-val" id="m-pnl">—</div>
+      <div class="metric-sub" id="m-pnl-sub">Today</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Open / Total</div>
+      <div class="metric-val" id="m-trades">—</div>
+      <div class="metric-sub">Positions / orders today</div>
+    </div>
+  </div>
+
+  <!-- DASHBOARD TAB -->
+  <div id="content-dashboard">
+    <div class="control-row">
+      <select id="dash-account" onchange="refreshDashboard()">
+        <option value="all">All accounts</option>
+        <option value="bull">Bull account</option>
+        <option value="bear">Bear account</option>
+      </select>
+      <select id="dash-filter" onchange="filterDashCards()">
+        <option value="all">All trades</option>
+        <option value="position">Positions</option>
+        <option value="pending">Open orders</option>
+        <option value="closed">Closed</option>
+        <option value="bull">Bull only</option>
+        <option value="bear">Bear only</option>
+      </select>
+      <input type="date" id="dash-date" onchange="refreshDashboard()"/>
+      <button class="btn-refresh" onclick="refreshDashboard()">↻ Refresh</button>
+    </div>
+    <div class="cards-grid" id="dash-cards">
+      <div class="empty" style="grid-column:1/-1;">Loading...</div>
+    </div>
+  </div>
+
+  <!-- SUMMARY TAB -->
+  <div id="content-summary" style="display:none;">
+    <div class="date-range">
+      <button class="dr-btn active" onclick="setSumDate('today',this)">Today</button>
+      <button class="dr-btn" onclick="setSumDate('yesterday',this)">Yesterday</button>
+      <button class="dr-btn" onclick="setSumDate('week',this)">This week</button>
+      <button class="dr-btn" onclick="setSumDate('month',this)">This month</button>
+      <input type="date" id="sum-custom-date" style="font-size:12px;padding:5px 8px;" onchange="setSumDate('custom',null)"/>
+    </div>
+    <div class="sum-metrics" id="sum-metrics">
+      <div class="metric"><div class="metric-label">Net P&amp;L</div><div class="metric-val" id="sm-pnl">—</div></div>
+      <div class="metric"><div class="metric-label">Win Rate</div><div class="metric-val" id="sm-wr">—</div></div>
+      <div class="metric"><div class="metric-label">Avg Winner</div><div class="metric-val" id="sm-avgw" style="color:var(--green);">—</div></div>
+      <div class="metric"><div class="metric-label">Total Trades</div><div class="metric-val" id="sm-total">—</div></div>
+    </div>
+    <div class="sum-two-col">
+      <div class="card">
+        <div class="card-title">Performance</div>
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span style="color:var(--muted);">Win rate</span><span id="sm-wr2">—</span></div>
+          <div class="win-bar"><div class="win-bar-fill" id="sm-wr-bar" style="width:0%"></div></div>
+        </div>
+        <div id="sum-perf-stats"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Bull vs Bear</div>
+        <div class="side-cards">
+          <div class="side-card bull-side"><div class="side-card-title">▲ Bull</div><div id="sum-bull-stats"></div></div>
+          <div class="side-card bear-side"><div class="side-card-title">▼ Bear</div><div id="sum-bear-stats"></div></div>
+        </div>
+      </div>
+    </div>
+    <!-- Comparison -->
+    <div class="card" style="margin-bottom:1rem;">
+      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+        vs Chatroom Results
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-sm" onclick="document.getElementById('img-upload').click()">Upload screenshot</button>
+          <button class="btn btn-sm" onclick="fetchChromeResults()">Fetch from extension</button>
+        </div>
+      </div>
+      <label class="upload-zone" for="img-upload">
+        <input type="file" id="img-upload" accept="image/*" onchange="uploadResultsImage(this)"/>
+        <span class="upload-label">Drop chatroom screenshot or click to browse</span>
+      </label>
+      <div id="comp-msg"></div>
+      <div id="comp-table-wrap"><div class="empty" style="padding:1.5rem 0;">No chatroom results loaded</div></div>
+    </div>
+    <!-- Trade list -->
+    <div class="card">
+      <div class="card-title">All Trades</div>
+      <div id="sum-trade-list"><div class="empty" style="padding:1.5rem 0;">No trades found</div></div>
+    </div>
+  </div>
+
+  <!-- WATCHLIST TAB -->
+  <div id="content-watchlist" style="display:none;">
+    <div class="mode-toggle">
+      <button class="mode-btn active-manual" id="btn-mode-manual" onclick="setMode('manual')">👁 Manual</button>
+      <div class="mode-divider"></div>
+      <button class="mode-btn" id="btn-mode-auto" onclick="setMode('auto')">⚡ Auto</button>
     </div>
     <div class="mode-desc" id="mode-desc">Manual: review each setup and place individually or all at once.</div>
 
@@ -248,19 +484,16 @@
       <div class="mode-divider"></div>
       <button class="mode-btn" id="btn-ot-multi" onclick="setOrderMode('multi')">Multi-target</button>
     </div>
-    <div id="multi-trail-opt" style="display:none; margin-bottom:1rem;">
-      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
-        <div>
-          <div class="label">Trailing stop %</div>
-          <input type="number" id="trailPct" value="1.5" min="0.1" max="20" step="0.1" style="width:90px;" />
-        </div>
-        <p class="note" style="margin-top:0; flex:1; align-self:flex-end;">Entry fills → 1/3 at T1, 1/3 at T2, 1/3 trailing stop. T2 hit → stop moves to T1 price.</p>
+    <div id="multi-trail-opt" style="display:none;margin-bottom:1rem;">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+        <div><div class="settings-label">Trailing stop %</div><input type="number" id="trailPct" value="1.5" min="0.1" max="20" step="0.1"/></div>
+        <p style="font-size:11px;color:var(--muted);flex:1;">Entry → 1/3 at T1, 1/3 at T2, 1/3 trailing stop. T2 hit → stop moves to T1 price.</p>
       </div>
     </div>
 
     <div class="card">
-      <div class="label">Watchlist text</div>
-      <textarea id="watchlistInput" placeholder="INTC Bullish above 85 (TGT 85.50, 86, 86.85)&#10;AMD Bearish below 335 (TGT 332.50, 330, 326.02)&#10;..."></textarea>
+      <div class="settings-label">Watchlist text</div>
+      <textarea id="watchlistInput" placeholder="INTC Bullish above 85 (TGT 85.50, 86, 86.85)&#10;AMD Bearish below 335 (TGT 332.50, 330, 326.02)"></textarea>
       <div class="row">
         <button class="btn-primary btn" onclick="parseWatchlist()">Parse watchlist</button>
         <button class="btn" onclick="loadSample()">Load sample</button>
@@ -268,204 +501,761 @@
       <div id="parse-msg"></div>
     </div>
 
-    <div id="setups-section" style="display:none;">
+    <div id="setups-section" style="display:none;margin-top:1rem;">
       <div class="card">
-        <div class="col-header">
-          <span>Symbol</span><span>Direction</span><span>Entry · TP · SL</span><span>Status</span><span></span>
-        </div>
+        <div class="col-header"><span>Symbol</span><span>Dir</span><span>Entry · TP · SL</span><span>Status</span><span></span></div>
         <div id="setups-list"></div>
       </div>
-      <div class="action-bar" id="action-bar">
-        <button class="btn btn-place-all" onclick="placeAllOrders()" id="btn-place-all">Place all bracket orders</button>
+      <div class="action-bar" id="wl-action-bar">
+        <button class="btn btn-primary" onclick="placeAllOrders()" id="btn-place-all">Place all bracket orders</button>
       </div>
       <div id="place-all-msg"></div>
     </div>
   </div>
 
-  <!-- ORDERS -->
-  <div id="tab-orders" style="display:none;">
-    <div class="row" style="margin-bottom:1rem;">
-      <button class="btn" onclick="refreshOrders()">Refresh</button>
+  <!-- ORDERS TAB -->
+  <div id="content-orders" style="display:none;">
+    <div style="display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;">
+      <button class="btn-refresh" onclick="refreshOrders()">↻ Refresh</button>
       <button class="btn-danger btn" onclick="cancelAllOrders()">Cancel all open</button>
     </div>
     <div id="orders-list"><div class="empty">Loading...</div></div>
   </div>
 
-  <!-- MONITOR -->
-  <div id="tab-monitor" style="display:none;">
-    <div class="monitor-topbar">
-      <div class="filter-bar">
-        <button class="filter-btn active" id="filter-all"      onclick="filterMonitor('all')">All</button>
-        <button class="filter-btn"        id="filter-position" onclick="filterMonitor('position')">Positions</button>
-        <button class="filter-btn"        id="filter-pending"  onclick="filterMonitor('pending')">Open orders</button>
-        <button class="filter-btn"        id="filter-closed"   onclick="filterMonitor('closed')">Closed</button>
-      </div>
-      <button class="btn" onclick="refreshMonitor()">Refresh</button>
-    </div>
-    <div id="monitor-list"><div class="empty">Tap Refresh to load positions</div></div>
-  </div>
-</div>
+</div><!-- /page -->
 
 <script>
-const PROXY = '';
+// ── State ──────────────────────────────────────────────────────────────────────
 let parsedSetups = [];
-let mode = 'manual';
+let wlMode = 'manual';
 let orderMode = 'bracket';
-let monitorCurrentFilter = 'all';
-const monitorCardData = {}; // keyed by "symbol_acct" — holds qty/isLong/tp/current for close panel
+let activeTab = 'dashboard';
+let sumDate = todayET();
+let dashCardData = {};
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function showTab(t) {
-  ['setup','watchlist','orders','monitor'].forEach((id,i) => {
-    document.getElementById('tab-'+id).style.display = id===t?'':'none';
-    document.querySelectorAll('.tab')[i].classList.toggle('active', id===t);
-  });
-  if(t==='orders') refreshOrders();
-  if(t==='monitor') refreshMonitor();
+// ── Utilities ──────────────────────────────────────────────────────────────────
+function todayET() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
-
-function round2(n) { return Math.round(n * 100) / 100; }
-function fmt(n) { return '$'+parseFloat(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmt(n) {
+  const v = parseFloat(n || 0);
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtPct(n) { return (n >= 0 ? '+' : '') + parseFloat(n).toFixed(2) + '%'; }
 function sign(n) { return n >= 0 ? '+' : ''; }
-
-function calcStopLoss(trigger, direction) {
-  const pct = parseFloat(document.getElementById('stopLossPct').value) / 100 || 0.03;
-  return direction === 'bull' ? round2(trigger * (1 - pct)) : round2(trigger * (1 + pct));
+function round2(n) { return Math.round(n * 100) / 100; }
+function fmtTime(isoStr) {
+  if (!isoStr) return '—';
+  return new Date(isoStr).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' });
 }
 
-// ── Setup tab — check both accounts ─────────────────────────────────────────
-async function checkAccounts() {
-  const msg = document.getElementById('conn-msg');
-  msg.innerHTML = '<div class="msg msg-info"><span class="spinner"></span>Checking accounts...</div>';
+// ── Settings ───────────────────────────────────────────────────────────────────
+function loadSettings() {
+  return {
+    apiKey:     localStorage.getItem('alpaca_key') || '',
+    apiSecret:  localStorage.getItem('alpaca_secret') || '',
+    maxDollars: parseFloat(localStorage.getItem('maxDollars') || '10000'),
+    stopLossPct:parseFloat(localStorage.getItem('stopLossPct') || '3'),
+    trailPct:   parseFloat(localStorage.getItem('trailPct') || '1.5'),
+    orderMode:  localStorage.getItem('orderMode') || 'bracket',
+    telegram:   localStorage.getItem('s_telegram') !== 'false',
+    push:       localStorage.getItem('s_push') === 'true',
+    sound:      localStorage.getItem('s_sound') === 'true'
+  };
+}
+function saveSettings() {
+  const s = {
+    apiKey:      document.getElementById('s-apiKey').value,
+    apiSecret:   document.getElementById('s-apiSecret').value,
+    maxDollars:  document.getElementById('s-maxDollars').value,
+    stopLossPct: document.getElementById('s-stopLossPct').value,
+    trailPct:    document.getElementById('s-trailPct').value,
+    orderMode:   document.getElementById('s-bracket-btn').classList.contains('active-manual') ? 'bracket' : 'multi',
+    telegram:    document.getElementById('s-telegram').checked,
+    push:        document.getElementById('s-push').checked,
+    sound:       document.getElementById('s-sound').checked
+  };
+  localStorage.setItem('alpaca_key', s.apiKey);
+  localStorage.setItem('alpaca_secret', s.apiSecret);
+  localStorage.setItem('maxDollars', s.maxDollars);
+  localStorage.setItem('stopLossPct', s.stopLossPct);
+  localStorage.setItem('trailPct', s.trailPct);
+  localStorage.setItem('orderMode', s.orderMode);
+  localStorage.setItem('s_telegram', s.telegram);
+  localStorage.setItem('s_push', s.push);
+  localStorage.setItem('s_sound', s.sound);
+  document.getElementById('settings-msg').innerHTML = '<div class="msg msg-ok">Settings saved</div>';
+  setTimeout(() => document.getElementById('settings-msg').innerHTML = '', 2000);
+}
+function setSettingsOrderMode(m) {
+  document.getElementById('s-bracket-btn').className = 'mode-btn' + (m === 'bracket' ? ' active-manual' : '');
+  document.getElementById('s-multi-btn').className   = 'mode-btn' + (m === 'multi'   ? ' active-auto' : '');
+}
+async function testConnection() {
+  const msg = document.getElementById('settings-msg');
+  msg.innerHTML = '<div class="msg msg-info"><span class="spinner"></span>Testing...</div>';
   try {
-    const [bullRes, bearRes] = await Promise.all([
-      fetch(PROXY+'/alpaca-bull/account'),
-      fetch(PROXY+'/alpaca-bear/account')
-    ]);
-    const bull = await bullRes.json();
-    const bear = await bearRes.json();
+    const r = await fetch('/alpaca-bull/account');
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    msg.innerHTML = `<div class="msg msg-ok">Connected ✓ — Account ${d.account_number}, Portfolio ${fmt(d.portfolio_value)}</div>`;
+  } catch(e) { msg.innerHTML = `<div class="msg msg-err">${e.message}</div>`; }
+}
+function populateSettingsForm() {
+  const s = loadSettings();
+  document.getElementById('s-apiKey').value     = s.apiKey;
+  document.getElementById('s-apiSecret').value  = s.apiSecret;
+  document.getElementById('s-maxDollars').value  = s.maxDollars;
+  document.getElementById('s-stopLossPct').value = s.stopLossPct;
+  document.getElementById('s-trailPct').value    = s.trailPct;
+  setSettingsOrderMode(s.orderMode);
+  document.getElementById('s-telegram').checked = s.telegram;
+  document.getElementById('s-push').checked     = s.push;
+  document.getElementById('s-sound').checked    = s.sound;
+}
+function openSettings()  { document.getElementById('settingsPanel').classList.add('open'); document.getElementById('settingsBackdrop').classList.add('open'); populateSettingsForm(); }
+function closeSettings() { document.getElementById('settingsPanel').classList.remove('open'); document.getElementById('settingsBackdrop').classList.remove('open'); }
 
-    if (!bullRes.ok) throw new Error('Bull account error: ' + (bull.error || bullRes.status));
-    if (!bearRes.ok) throw new Error('Bear account error: ' + (bear.error || bearRes.status));
+// ── Nav / Tab ──────────────────────────────────────────────────────────────────
+function showTab(t) {
+  ['dashboard','summary','watchlist','orders'].forEach(id => {
+    document.getElementById('content-'+id).style.display = id === t ? '' : 'none';
+    document.getElementById('tab-'+id).classList.toggle('active', id === t);
+  });
+  activeTab = t;
+  if (t === 'dashboard') refreshDashboard();
+  if (t === 'summary')   loadSummary();
+  if (t === 'orders')    refreshOrders();
+}
 
-    document.getElementById('acct-grid').style.display = 'grid';
-
-    const setPnl = (id, val) => {
-      const el = document.getElementById(id);
-      const n = parseFloat(val || 0);
-      el.textContent = (n >= 0 ? '+' : '') + fmt(n);
-      el.style.color = n >= 0 ? '#4ade80' : '#f87171';
-    };
-
-    document.getElementById('bull-equity').textContent = fmt(bull.portfolio_value);
-    document.getElementById('bull-bp').textContent = fmt(bull.buying_power);
-    setPnl('bull-pnl', bull.unrealized_pl);
-
-    document.getElementById('bear-equity').textContent = fmt(bear.portfolio_value);
-    document.getElementById('bear-bp').textContent = fmt(bear.buying_power);
-    setPnl('bear-pnl', bear.unrealized_pl);
-
-    msg.innerHTML = '<div class="msg msg-ok">Both accounts connected ✓</div>';
-  } catch(e) {
-    msg.innerHTML = '<div class="msg msg-err">'+e.message+'</div>';
+// ── Market countdown ───────────────────────────────────────────────────────────
+function updateCountdown() {
+  const el = document.getElementById('mkt-countdown');
+  const now = new Date();
+  const etNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const h = etNow.getHours(), m = etNow.getMinutes(), s = etNow.getSeconds(), day = etNow.getDay();
+  const isWeekend = day === 0 || day === 6;
+  const isOpen = !isWeekend && (h > 9 || (h === 9 && m >= 30)) && h < 16;
+  if (isOpen) { el.textContent = 'Market open'; el.className = 'nav-countdown open'; return; }
+  let target;
+  if (isWeekend || h >= 16) {
+    target = new Date(etNow);
+    if (isWeekend) { const daysUntilMon = (8 - day) % 7 || 7; target.setDate(target.getDate() + daysUntilMon); }
+    else target.setDate(target.getDate() + 1);
+    target.setHours(9, 30, 0, 0);
+  } else {
+    target = new Date(etNow); target.setHours(9, 30, 0, 0);
   }
+  const diff = Math.max(0, Math.round((target - etNow) / 1000));
+  const hh = Math.floor(diff / 3600), mm = Math.floor((diff % 3600) / 60), ss = diff % 60;
+  el.textContent = `Opens ${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+  el.className = 'nav-countdown';
+}
+setInterval(updateCountdown, 1000);
+updateCountdown();
+
+// ── Metrics ────────────────────────────────────────────────────────────────────
+async function loadMetrics() {
+  try {
+    const [bullRes, bearRes, bullPosRes] = await Promise.all([
+      fetch('/alpaca-bull/account'),
+      fetch('/alpaca-bear/account'),
+      fetch('/alpaca-bull/positions')
+    ]);
+    const bull = bullRes.ok ? await bullRes.json() : null;
+    const bear = bearRes.ok ? await bearRes.json() : null;
+    const bullPos = bullPosRes.ok ? await bullPosRes.json() : [];
+
+    if (bull) {
+      document.getElementById('m-portfolio').textContent = fmt(bull.portfolio_value);
+      document.getElementById('m-bp').textContent = fmt(bull.buying_power);
+      const pnl = parseFloat(bull.unrealized_pl || 0);
+      const pnlEl = document.getElementById('m-pnl');
+      pnlEl.textContent = sign(pnl) + fmt(pnl);
+      pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      const pct = parseFloat(bull.unrealized_plpc || 0) * 100;
+      document.getElementById('m-pnl-sub').textContent = fmtPct(pct);
+    }
+    const posCount = Array.isArray(bullPos) ? bullPos.length : 0;
+    document.getElementById('m-trades').textContent = posCount + ' / —';
+  } catch(e) { console.error('Metrics error:', e.message); }
 }
 
-// ── Mode toggle ──────────────────────────────────────────────────────────────
-function setMode(m) {
-  mode = m;
-  document.getElementById('btn-mode-manual').className = 'mode-btn' + (m==='manual' ? ' active-manual' : '');
-  document.getElementById('btn-mode-auto').className   = 'mode-btn' + (m==='auto'   ? ' active-auto'   : '');
-  document.getElementById('mode-desc').textContent = m === 'manual'
-    ? 'Manual: review each setup and place individually or all at once.'
-    : 'Auto: setups are placed immediately after parsing — no review needed.';
-  document.getElementById('action-bar').style.display = m === 'manual' ? 'flex' : 'none';
+// ── Dashboard ──────────────────────────────────────────────────────────────────
+async function refreshDashboard() {
+  const el = document.getElementById('dash-cards');
+  el.innerHTML = '<div class="empty" style="grid-column:1/-1;"><span class="spinner"></span>Loading...</div>';
+
+  const dateVal = document.getElementById('dash-date').value || todayET();
+  const acctFilter = document.getElementById('dash-account').value;
+
+  const todayStart = new Date(dateVal + 'T04:00:00Z').toISOString();
+  const todayEnd   = new Date(dateVal + 'T23:59:59Z').toISOString();
+  const ordQs = `/orders?status=all&limit=200&nested=true&direction=desc&after=${encodeURIComponent(todayStart)}&before=${encodeURIComponent(todayEnd)}`;
+
+  try {
+    const fetches = [];
+    if (acctFilter !== 'bear') fetches.push(fetch('/alpaca-bull/positions').then(r=>r.ok?r.json():[]).then(d=>d.map(p=>({...p,_acct:'bull'}))));
+    else fetches.push(Promise.resolve([]));
+    if (acctFilter !== 'bull') fetches.push(fetch('/alpaca-bear/positions').then(r=>r.ok?r.json():[]).then(d=>d.map(p=>({...p,_acct:'bear'}))));
+    else fetches.push(Promise.resolve([]));
+    if (acctFilter !== 'bear') fetches.push(fetch('/alpaca-bull'+ordQs).then(r=>r.ok?r.json():[]).then(d=>d.map(o=>({...o,_acct:'bull'}))));
+    else fetches.push(Promise.resolve([]));
+    if (acctFilter !== 'bull') fetches.push(fetch('/alpaca-bear'+ordQs).then(r=>r.ok?r.json():[]).then(d=>d.map(o=>({...o,_acct:'bear'}))));
+    else fetches.push(Promise.resolve([]));
+    fetches.push(fetch('/api/order-metadata').then(r=>r.ok?r.json():{}));
+
+    const [bullPos, bearPos, bullOrd, bearOrd, serverMeta] = await Promise.all(fetches);
+
+    const allPos = [...bullPos, ...bearPos];
+    const allOrd = [...bullOrd, ...bearOrd];
+
+    const posMap = {};
+    for (const p of allPos) posMap[p.symbol+'|'+p._acct] = p;
+
+    const seen = new Set();
+    const byKey = {};
+    for (const o of allOrd) {
+      if (seen.has(o.id)) continue; seen.add(o.id);
+      const k = o.symbol+'|'+o._acct;
+      if (!byKey[k]) byKey[k] = [];
+      byKey[k].push(o);
+    }
+    for (const k of Object.keys(posMap)) { if (!byKey[k]) byKey[k] = []; }
+
+    const keys = Object.keys(byKey);
+    if (!keys.length) { el.innerHTML = '<div class="empty" style="grid-column:1/-1;">No trades found for this date</div>'; return; }
+
+    const symbols = [...new Set(keys.map(k => k.split('|')[0]))];
+    const snapRes = await fetch('/alpaca-data/stocks/snapshots?symbols=' + encodeURIComponent(symbols.join(',')));
+    const snaps = snapRes.ok ? await snapRes.json() : {};
+
+    const OPEN = ['new','accepted','held','partially_filled'];
+    keys.sort((a, b) => {
+      const rank = k => posMap[k] ? 0 : byKey[k].some(o => OPEN.includes(o.status)) ? 1 : 2;
+      return rank(a) - rank(b);
+    });
+
+    const cards = keys.map(key => buildTradeCard(key, posMap, byKey, snaps, serverMeta)).filter(Boolean);
+    el.innerHTML = cards.join('') || '<div class="empty" style="grid-column:1/-1;">No trades found</div>';
+
+    // Store card data for close panels
+    filterDashCards();
+  } catch(e) { el.innerHTML = `<div class="msg msg-err" style="grid-column:1/-1;">${e.message}</div>`; }
 }
 
-function setOrderMode(m) {
-  orderMode = m;
-  document.getElementById('btn-ot-bracket').className = 'mode-btn' + (m==='bracket' ? ' active-manual' : '');
-  document.getElementById('btn-ot-multi').className   = 'mode-btn' + (m==='multi'   ? ' active-auto'   : '');
-  document.getElementById('multi-trail-opt').style.display = m==='multi' ? '' : 'none';
-  const btn = document.getElementById('btn-place-all');
-  if (btn) btn.textContent = m==='multi' ? 'Place all multi-target orders' : 'Place all bracket orders';
+function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
+  const [symbol, acct] = key.split('|');
+  const domKey = symbol + '_' + acct;
+  const pos    = posMap[key];
+  const orders = byKey[key] || [];
+  const snap   = snaps[symbol];
+  const current = snap
+    ? parseFloat(snap.latestTrade?.p || snap.minuteBar?.c || pos?.current_price || 0)
+    : parseFloat(pos?.current_price || 0);
+
+  const OPEN = ['new','accepted','held','partially_filled'];
+  const entryOrd  = orders.find(o => o.status === 'filled') || orders.find(o => OPEN.includes(o.status)) || orders[0];
+  const hasFill   = !!pos;
+  const isPending = !hasFill && entryOrd && OPEN.includes(entryOrd.status);
+  const isClosed  = !hasFill && !isPending;
+  const isLong    = pos ? pos.side === 'long' : entryOrd ? entryOrd.side === 'buy' : true;
+  const qty       = pos ? Math.abs(parseFloat(pos.qty)) : Math.abs(parseFloat(entryOrd?.qty || 0));
+  const isBull    = isLong;
+
+  const legs  = entryOrd?.legs || [];
+  const tpLeg = legs.find(l => l.type === 'limit' && l.side !== entryOrd?.side);
+  const slLeg = legs.find(l => l.type === 'stop_limit' || l.type === 'stop');
+  const tp    = tpLeg ? parseFloat(tpLeg.limit_price) : null;
+  const sl    = slLeg ? parseFloat(slLeg.stop_price)  : null;
+
+  // Multi-target metadata from server
+  let meta = null;
+  for (const [oid, m] of Object.entries(serverMeta || {})) {
+    if (m.symbol === symbol && m.acct === acct) { meta = m; break; }
+  }
+  const t1 = tp || meta?.target1 || null;
+  const t2 = meta?.target2 || null;
+  const trailPct = meta?.trailPct || null;
+  const slPrice  = sl || meta?.stopLossPrice || null;
+
+  const dirClass = isBull ? 'bull' : 'bear';
+  const dirBadge = isBull
+    ? '<span class="badge badge-bull">▲ Bull</span>'
+    : '<span class="badge badge-bear">▼ Bear</span>';
+  const acctBadge = acct === 'bull'
+    ? '<span class="badge" style="background:rgba(74,222,128,.08);color:var(--green);font-size:10px;">BULL</span>'
+    : '<span class="badge" style="background:rgba(96,165,250,.08);color:var(--blue);font-size:10px;">BEAR</span>';
+
+  dashCardData[domKey] = { qty, isLong, tp: t1, current, acct, symbol };
+
+  // ── POSITION card ──────────────────────────────────────────────────────────
+  if (hasFill) {
+    const entry   = parseFloat(pos.avg_entry_price);
+    const pnl     = (current - entry) * parseFloat(pos.qty) * (pos.side === 'long' ? 1 : -1);
+    const pnlPct  = entry ? pnl / (entry * Math.abs(parseFloat(pos.qty))) * 100 : 0;
+    const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+    const priceBar = buildPriceBar({ sl: slPrice, entry, targets: [t1, t2].filter(Boolean), current, isBull, trailPct });
+    const legs = buildLegs({ t1, t2, trailPct, entry, qty, isBull, tpLeg, slLeg });
+
+    return `<div class="trade-card ${dirClass}" data-filter="position" data-dir="${dirClass}">
+      <div class="card-inner">
+        <div class="card-head">
+          <div>
+            <div class="card-sym">${symbol}</div>
+            <div class="card-badges">${dirBadge}${acctBadge}<span class="badge badge-active">Active</span></div>
+          </div>
+          <div class="card-price">
+            <div class="card-price-val">${current ? fmt(current) : '—'}</div>
+            <div class="card-pnl" style="color:${pnlColor};">${sign(pnl)}${fmt(pnl)} <span style="font-size:11px;">(${fmtPct(pnlPct)})</span></div>
+          </div>
+        </div>
+        <div class="card-stats">
+          Entry <span>${fmt(entry)}</span>
+          Shares <span>${qty}</span>
+          Amt <span>${fmt(entry * qty)}</span>
+          Time <span>${fmtTime(entryOrd?.filled_at)}</span>
+        </div>
+        ${priceBar}
+        <div class="legs-toggle" onclick="toggleLegs('${domKey}')">
+          <span>Target Legs</span><span id="legs-arrow-${domKey}">▼</span>
+        </div>
+        <div class="legs-body open" id="legs-${domKey}">${legs}</div>
+        <div class="card-actions">
+          <button class="btn-close-pos" id="closebtn_${domKey}" onclick="expandClose('${domKey}')">Close Position</button>
+        </div>
+        <div class="close-expand" id="closepanel_${domKey}">
+          <button class="btn-mkt" onclick="submitMarketClose('${symbol}','${acct}','${domKey}')">Market — close now</button>
+          <div class="close-row">
+            <span style="font-size:12px;color:var(--muted);white-space:nowrap;">Limit</span>
+            <input type="number" id="closeprice_${domKey}" value="${t1 ? t1.toFixed(2) : current.toFixed(2)}" step="0.01"/>
+            <button class="btn-lmt" onclick="submitLimitClose('${symbol}','${acct}','${domKey}')">Submit</button>
+            <button class="btn-x" onclick="collapseClose('${domKey}')">✕</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ── PENDING card ───────────────────────────────────────────────────────────
+  if (isPending && entryOrd) {
+    const trigger  = parseFloat(entryOrd.stop_price || entryOrd.limit_price || 0);
+    const distance = (trigger && current) ? Math.abs(trigger - current) : null;
+    const priceBar = buildPriceBar({ sl: slPrice, entry: trigger, targets: [t1, t2].filter(Boolean), current, isBull, trailPct });
+    return `<div class="trade-card ${dirClass}" data-filter="pending" data-dir="${dirClass}">
+      <div class="card-inner">
+        <div class="card-head">
+          <div>
+            <div class="card-sym">${symbol}</div>
+            <div class="card-badges">${dirBadge}${acctBadge}<span class="badge badge-pending">Pending</span></div>
+          </div>
+          <div class="card-price">
+            <div class="card-price-val">${current ? fmt(current) : '—'}</div>
+          </div>
+        </div>
+        <div class="pending-dist">
+          Trigger ${fmt(trigger)}${distance ? ` · ${fmt(distance)} away` : ''}
+        </div>
+        ${priceBar}
+        <div class="card-stats">
+          Shares <span>${qty}</span>
+          ${t1 ? `T1 <span style="color:var(--green)">${fmt(t1)}</span>` : ''}
+          ${slPrice ? `SL <span style="color:var(--red)">${fmt(slPrice)}</span>` : ''}
+        </div>
+        <button class="btn-cancel-ord" onclick="dashCancelOrder('${entryOrd.id}','${acct}')">Cancel Order</button>
+      </div>
+    </div>`;
+  }
+
+  // ── CLOSED card ────────────────────────────────────────────────────────────
+  if (isClosed && entryOrd) {
+    const filledExitLeg = entryOrd.status !== 'filled' ? null
+      : (entryOrd.legs || []).find(l => l.status === 'filled');
+    const isCanceled = ['canceled','expired'].includes(entryOrd.status);
+
+    let exitPrice = null, entryPrice = null, pnl = null, pnlPct = 0, exitLabel = '';
+    if (filledExitLeg) {
+      entryPrice = parseFloat(entryOrd.filled_avg_price || 0);
+      exitPrice  = parseFloat(filledExitLeg.filled_avg_price || 0);
+      const fQty = parseFloat(entryOrd.filled_qty || entryOrd.qty || 0);
+      pnl    = (entryOrd.side === 'buy' ? exitPrice - entryPrice : entryPrice - exitPrice) * fQty;
+      pnlPct = entryPrice ? pnl / (entryPrice * fQty) * 100 : 0;
+      exitLabel = filledExitLeg.type === 'limit' ? 'take-profit' : 'stop-loss';
+    } else if (entryOrd.status === 'filled') {
+      entryPrice = parseFloat(entryOrd.filled_avg_price || 0);
+    }
+
+    const pnlColor = pnl == null ? 'var(--muted)' : pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    const winLoss  = pnl == null ? '' : pnl >= 0
+      ? '<span class="badge badge-win">Win</span>'
+      : '<span class="badge badge-loss">Loss</span>';
+
+    return `<div class="trade-card ${dirClass} closed-card" data-filter="closed" data-dir="${dirClass}">
+      ${pnl != null ? `<div class="pnl-banner ${pnl >= 0 ? 'win' : 'loss'}">
+        <span>${sign(pnl || 0)}${fmt(pnl)}</span>
+        <span style="color:${pnlColor};font-size:12px;">${fmtPct(pnlPct)}</span>
+      </div>` : ''}
+      <div class="card-inner">
+        <div class="card-head">
+          <div>
+            <div class="card-sym">${symbol}</div>
+            <div class="card-badges">${dirBadge}${acctBadge}${winLoss}<span class="badge badge-closed">${isCanceled ? entryOrd.status : 'Closed'}</span></div>
+          </div>
+          <div class="card-price">
+            ${exitPrice ? `<div class="card-price-val">${fmt(exitPrice)}</div>` : ''}
+          </div>
+        </div>
+        <div class="card-stats">
+          ${entryPrice ? `Entry <span>${fmt(entryPrice)}</span>` : ''}
+          ${exitPrice  ? `Exit <span>${fmt(exitPrice)}</span>` : ''}
+          ${exitLabel  ? `Via <span style="color:var(--muted)">${exitLabel}</span>` : ''}
+          Shares <span>${qty}</span>
+        </div>
+      </div>
+    </div>`;
+  }
+  return '';
 }
 
-// ── Watchlist parsing ────────────────────────────────────────────────────────
+function buildPriceBar({ sl, entry, targets, current, isBull, trailPct }) {
+  const prices = [sl, entry, ...targets, current].filter(p => p && p > 0 && isFinite(p));
+  if (prices.length < 2) return '';
+  const min = Math.min(...prices) * 0.998;
+  const max = Math.max(...prices) * 1.002;
+  const pct = p => ((p - min) / (max - min) * 96 + 2).toFixed(1);
+
+  let markers = '';
+  if (sl) markers += `<div class="pb-marker sl" style="left:${pct(sl)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">SL ${fmt(sl)}</div></div>`;
+  if (entry) markers += `<div class="pb-marker entry" style="left:${pct(entry)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">Entry ${fmt(entry)}</div></div>`;
+  targets.forEach((t, i) => {
+    if (!t) return;
+    const op = i === 0 ? '1' : i === 1 ? '.75' : '.55';
+    markers += `<div class="pb-marker target" style="left:${pct(t)}%;opacity:${op}"><div class="pb-marker-dot"></div><div class="pb-marker-label">T${i+1} ${fmt(t)}</div></div>`;
+  });
+  if (trailPct) markers += `<div class="pb-marker target" style="left:95%;opacity:.45"><div class="pb-marker-dot" style="background:var(--amber);"></div><div class="pb-marker-label">Trail ${trailPct}%</div></div>`;
+  if (current) markers += `<div class="pb-marker current" style="left:${pct(current)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">${fmt(current)}</div></div>`;
+
+  return `<div class="price-bar-wrap"><div class="price-bar-track">${markers}</div></div>`;
+}
+
+function buildLegs({ t1, t2, trailPct, entry, qty, isBull, tpLeg, slLeg }) {
+  const share1 = Math.floor(qty / 3), share2 = Math.floor(qty / 3), share3 = qty - share1 - share2;
+  let html = '';
+  if (t1) {
+    const pnl = isBull ? (t1 - entry) * share1 : (entry - t1) * share1;
+    const t1Filled = tpLeg?.status === 'filled';
+    html += `<div class="leg-row">
+      <span class="leg-label">T1</span>
+      <span class="leg-price" style="color:var(--green);">${fmt(t1)}</span>
+      <span class="leg-shares">${share1} sh</span>
+      <span class="badge ${t1Filled ? 'badge-filled' : 'badge-pending'}" style="font-size:10px;">${t1Filled ? 'Filled' : 'Pending'}</span>
+      <span class="leg-pnl" style="color:${pnl>=0?'var(--green)':'var(--red)'};">${sign(pnl)}${fmt(pnl)}</span>
+    </div>`;
+  }
+  if (t2) {
+    const pnl = isBull ? (t2 - entry) * share2 : (entry - t2) * share2;
+    html += `<div class="leg-row">
+      <span class="leg-label">T2</span>
+      <span class="leg-price" style="color:var(--green);opacity:.8;">${fmt(t2)}</span>
+      <span class="leg-shares">${share2} sh</span>
+      <span class="badge badge-pending" style="font-size:10px;">Pending</span>
+      <span class="leg-pnl" style="color:var(--green);">${sign(pnl)}${fmt(pnl)}</span>
+    </div>`;
+  }
+  if (trailPct) {
+    html += `<div class="leg-row">
+      <span class="leg-label">T3</span>
+      <span class="leg-price" style="color:var(--amber);">Trail ${trailPct}%</span>
+      <span class="leg-shares">${share3} sh</span>
+      <span class="badge badge-pending" style="font-size:10px;">Trailing</span>
+    </div>`;
+  } else if (!t2 && t1) {
+    const pnl = isBull ? (t1 - entry) * share3 : (entry - t1) * share3;
+    html += `<div class="leg-row">
+      <span class="leg-label">TP</span>
+      <span class="leg-price" style="color:var(--green);">${fmt(t1)}</span>
+      <span class="leg-shares">${qty} sh</span>
+      <span class="badge ${tpLeg?.status==='filled'?'badge-filled':'badge-pending'}" style="font-size:10px;">${tpLeg?.status==='filled'?'Filled':'Pending'}</span>
+      <span class="leg-pnl" style="color:${pnl>=0?'var(--green)':'var(--red)'};">${sign(pnl)}${fmt(pnl)}</span>
+    </div>`;
+  }
+  return html;
+}
+
+function toggleLegs(key) {
+  const body  = document.getElementById('legs-'+key);
+  const arrow = document.getElementById('legs-arrow-'+key);
+  if (!body) return;
+  body.classList.toggle('open');
+  if (arrow) arrow.textContent = body.classList.contains('open') ? '▼' : '▶';
+}
+
+function filterDashCards() {
+  const f = document.getElementById('dash-filter').value;
+  document.querySelectorAll('.trade-card').forEach(card => {
+    const ft  = card.dataset.filter;
+    const dir = card.dataset.dir;
+    const show = f === 'all' || f === ft || (f === 'bull' && dir === 'bull') || (f === 'bear' && dir === 'bear');
+    card.style.display = show ? '' : 'none';
+  });
+}
+
+function expandClose(key) {
+  document.getElementById('closebtn_'+key).style.display = 'none';
+  document.getElementById('closepanel_'+key).classList.add('open');
+}
+function collapseClose(key) {
+  document.getElementById('closebtn_'+key).style.display = '';
+  document.getElementById('closepanel_'+key).classList.remove('open');
+}
+async function submitMarketClose(symbol, acct, key) {
+  try {
+    const r = await fetch('/alpaca-'+acct+'/positions/'+symbol, { method: 'DELETE' });
+    if (!r.ok) { const d=await r.json(); alert('Error: '+(d.message||JSON.stringify(d))); return; }
+    setTimeout(refreshDashboard, 800);
+  } catch(e) { alert('Error: '+e.message); }
+}
+async function submitLimitClose(symbol, acct, key) {
+  const input = document.getElementById('closeprice_'+key);
+  const data  = dashCardData[key];
+  if (!input || !data) return;
+  const price = parseFloat(input.value);
+  if (!price || isNaN(price)) { alert('Enter a valid limit price'); return; }
+  const side = data.isLong ? 'sell' : 'buy';
+  try {
+    const r = await fetch('/alpaca-'+acct+'/orders', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ symbol, qty: String(data.qty), side, type:'limit', limit_price:String(price), time_in_force:'day' })
+    });
+    const d = await r.json();
+    if (!r.ok) { alert('Error: '+(d.message||JSON.stringify(d))); return; }
+    setTimeout(refreshDashboard, 800);
+  } catch(e) { alert('Error: '+e.message); }
+}
+async function dashCancelOrder(id, acct) {
+  try {
+    await fetch('/alpaca-'+acct+'/orders/'+id, { method: 'DELETE' });
+    refreshDashboard();
+  } catch(e) { alert('Cancel failed: '+e.message); }
+}
+
+// ── Summary ────────────────────────────────────────────────────────────────────
+function setSumDate(range, btn) {
+  document.querySelectorAll('.dr-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const now = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  if (range === 'today')     sumDate = now;
+  else if (range === 'yesterday') {
+    const d = new Date(); d.setDate(d.getDate()-1);
+    sumDate = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  } else if (range === 'week') {
+    const d = new Date(); const day = d.getDay(); d.setDate(d.getDate() - (day||7) + 1);
+    sumDate = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  } else if (range === 'month') {
+    sumDate = now.slice(0,8) + '01';
+  } else if (range === 'custom') {
+    sumDate = document.getElementById('sum-custom-date').value || now;
+  }
+  loadSummary();
+}
+
+async function loadSummary() {
+  try {
+    const r = await fetch('/db/summary?date='+sumDate);
+    const s = r.ok ? await r.json() : null;
+    if (s) renderSummary(s);
+
+    const cr = await fetch('/db/comparison?date='+sumDate);
+    const cdata = cr.ok ? await cr.json() : null;
+    if (cdata) renderComparison(cdata);
+  } catch(e) { console.error('Summary error:', e); }
+}
+
+function renderSummary(s) {
+  const pnl = s.netPnl || 0;
+  document.getElementById('sm-pnl').textContent = sign(pnl) + fmt(pnl);
+  document.getElementById('sm-pnl').style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('sm-wr').textContent  = (s.winRate || 0).toFixed(0) + '%';
+  document.getElementById('sm-avgw').textContent = fmt(s.avgWinner || 0);
+  document.getElementById('sm-total').textContent = s.closedTrades || 0;
+
+  const wr = s.winRate || 0;
+  document.getElementById('sm-wr2').textContent = wr.toFixed(0) + '%';
+  document.getElementById('sm-wr-bar').style.width = wr + '%';
+
+  document.getElementById('sum-perf-stats').innerHTML = [
+    ['Total profit', `<span style="color:var(--green)">${sign(s.totalProfit)}${fmt(s.totalProfit)}</span>`],
+    ['Total loss',   `<span style="color:var(--red)">${fmt(s.totalLoss)}</span>`],
+    ['Best trade',   s.best ? `<span style="color:var(--green)">${fmt(s.best.total_pnl)}</span> (${s.best.symbol})` : '—'],
+    ['Worst trade',  s.worst ? `<span style="color:var(--red)">${fmt(s.worst.total_pnl)}</span> (${s.worst.symbol})` : '—'],
+    ['Profit factor', s.profitFactor ? s.profitFactor.toFixed(2) : '—'],
+    ['Avg hold', s.avgHold ? s.avgHold.toFixed(0) + ' min' : '—'],
+    ['Winners / Losers', `${s.winners} / ${s.losers}`]
+  ].map(([k,v]) => `<div class="stat-row"><span class="stat-label">${k}</span><span>${v}</span></div>`).join('');
+
+  const renderSide = (data, id) => {
+    document.getElementById(id).innerHTML = [
+      ['Trades', data.total || 0],
+      ['Winners', data.winners || 0],
+      ['Losers', (data.total||0) - (data.winners||0)],
+      ['Win rate', data.total ? ((data.winners/data.total)*100).toFixed(0)+'%' : '—'],
+      ['Net P&L', `<span style="color:${(data.netPnl||0)>=0?'var(--green)':'var(--red)'}">${sign(data.netPnl||0)}${fmt(data.netPnl||0)}</span>`]
+    ].map(([k,v]) => `<div class="side-stat"><span class="sk">${k}</span><span>${v}</span></div>`).join('');
+  };
+  renderSide(s.bull || {}, 'sum-bull-stats');
+  renderSide(s.bear || {}, 'sum-bear-stats');
+}
+
+function renderComparison(cdata) {
+  const our   = cdata.ourTrades   || [];
+  const their = cdata.theirResults || [];
+  const wrap  = document.getElementById('comp-table-wrap');
+  if (!their.length) { wrap.innerHTML = '<div class="empty" style="padding:1rem 0;">No chatroom results for this date</div>'; return; }
+
+  const rows = their.map(t => {
+    const match = our.find(o => o.symbol === t.symbol);
+    return `<tr>
+      <td>${t.symbol}</td>
+      <td>${t.direction || '—'}</td>
+      <td>${match ? fmt(match.entry_price) : '—'}</td>
+      <td>${t.entry_price ? fmt(t.entry_price) : '—'}</td>
+      <td>${match && match.total_pnl != null ? fmt(match.total_pnl) : '—'}</td>
+      <td>${t.exit_price ? fmt(t.exit_price) : '—'}</td>
+      <td style="color:${(match?.total_pct||0)>=0?'var(--green)':'var(--red)'};">${match?.total_pct != null ? fmtPct(match.total_pct) : '—'}</td>
+      <td style="color:${(t.gain_pct||0)>=0?'var(--green)':'var(--red)'};">${t.gain_pct != null ? fmtPct(t.gain_pct) : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `<div style="overflow-x:auto;"><table class="comp-table">
+    <thead><tr><th>Symbol</th><th>Dir</th><th>Our Entry</th><th>Their Entry</th><th>Our P&L</th><th>Their Exit</th><th>Our %</th><th>Their %</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+
+  // Trade list
+  document.getElementById('sum-trade-list').innerHTML = our.length
+    ? our.map(t => {
+        const pnl = t.total_pnl || 0;
+        return `<div class="trade-list-row">
+          <span class="tl-sym">${t.symbol}</span>
+          <span class="badge ${t.direction==='bull'?'badge-bull':'badge-bear'}" style="font-size:10px;">${t.direction}</span>
+          <span class="badge ${pnl>=0?'badge-win':'badge-loss'}" style="font-size:10px;">${pnl>=0?'Win':'Loss'}</span>
+          <div class="tl-meta">Entry ${t.entry_price?fmt(t.entry_price):'—'} · ${t.entry_time_et||''}</div>
+          <div class="tl-pnl" style="color:${pnl>=0?'var(--green)':'var(--red)'};">${sign(pnl)}${fmt(pnl)}</div>
+        </div>`;
+      }).join('')
+    : '<div class="empty" style="padding:1rem 0;">No DB trades found — trades are saved automatically when orders fill</div>';
+}
+
+async function uploadResultsImage(input) {
+  if (!input.files[0]) return;
+  const msg = document.getElementById('comp-msg');
+  msg.innerHTML = '<div class="msg msg-info"><span class="spinner"></span>Extracting results with Claude...</div>';
+  const fd = new FormData();
+  fd.append('image', input.files[0]);
+  fd.append('date', sumDate);
+  try {
+    const r = await fetch('/db/upload-results', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) { msg.innerHTML = `<div class="msg msg-err">${d.error}</div>`; return; }
+    msg.innerHTML = `<div class="msg msg-ok">Extracted ${d.count} results from image</div>`;
+    loadSummary();
+  } catch(e) { msg.innerHTML = `<div class="msg msg-err">${e.message}</div>`; }
+}
+
+async function fetchChromeResults() {
+  const msg = document.getElementById('comp-msg');
+  msg.innerHTML = '<div class="msg msg-amber">Chrome extension should POST results to /db/chatroom-results. Refreshing comparison...</div>';
+  setTimeout(loadSummary, 1500);
+}
+
+// ── Watchlist ──────────────────────────────────────────────────────────────────
 const SAMPLE = `INTC Bullish above 85 (TGT 85.50, 86, 86.85)
 INTC Bearish below 83.50 (TGT 83, 82.50, 82, 81.13)
 AMD Bullish above 342.50 (TGT 345, 346.94, 349.87)
 AMD Bearish below 335 (TGT 332.50, 330, 326.02)
 SMR Bullish above 13.50 (TGT 13.81, 14.50, 14.79)
-APLD Bullish above 38 (TGT 38.50, 38.76)
-APLD Bearish below 36.50 (TGT 36.10)`;
+APLD Bullish above 38 (TGT 38.50, 38.76)`;
 
 function loadSample() { document.getElementById('watchlistInput').value = SAMPLE; }
 
+function calcSL(trigger, dir) {
+  const pct = parseFloat(document.getElementById('s-stopLossPct')?.value || localStorage.getItem('stopLossPct') || '3') / 100 || 0.03;
+  return dir === 'bull' ? round2(trigger * (1 - pct)) : round2(trigger * (1 + pct));
+}
+
+function setMode(m) {
+  wlMode = m;
+  document.getElementById('btn-mode-manual').className = 'mode-btn' + (m==='manual'?' active-manual':'');
+  document.getElementById('btn-mode-auto').className   = 'mode-btn' + (m==='auto'?' active-auto':'');
+  document.getElementById('mode-desc').textContent = m==='manual'
+    ? 'Manual: review each setup and place individually or all at once.'
+    : 'Auto: setups are placed immediately after parsing.';
+  document.getElementById('wl-action-bar').style.display = m==='manual' ? 'flex' : 'none';
+}
+
+function setOrderMode(m) {
+  orderMode = m;
+  document.getElementById('btn-ot-bracket').className = 'mode-btn' + (m==='bracket'?' active-manual':'');
+  document.getElementById('btn-ot-multi').className   = 'mode-btn' + (m==='multi'?' active-auto':'');
+  document.getElementById('multi-trail-opt').style.display = m==='multi' ? '' : 'none';
+  const btn = document.getElementById('btn-place-all');
+  if (btn) btn.textContent = m==='multi' ? 'Place all multi-target orders' : 'Place all bracket orders';
+}
+
 async function parseWatchlist() {
   const text = document.getElementById('watchlistInput').value.trim();
-  const msg = document.getElementById('parse-msg');
-  if(!text) { msg.innerHTML='<div class="msg msg-err">Please enter watchlist text</div>'; return; }
-  const results = [];
-  let lastSymbol = null;
-  for(const line of text.split('\n')) {
-    const t = line.trim();
-    if(!t) continue;
+  const msg  = document.getElementById('parse-msg');
+  if (!text) { msg.innerHTML = '<div class="msg msg-err">Please enter watchlist text</div>'; return; }
+  const results = []; let lastSym = null;
+  for (const line of text.split('\n')) {
+    const t = line.trim(); if (!t) continue;
     const bull = t.match(/^([A-Z]{1,6})\s+Bullish above\s+([\d.]+).*?\(TGT\s+([\d.,\s]+)\)/i);
-    if(bull) {
-      lastSymbol = bull[1].toUpperCase();
+    if (bull) {
+      lastSym = bull[1].toUpperCase();
       const targets = bull[3].split(',').map(x=>parseFloat(x.trim())).filter(x=>!isNaN(x));
-      results.push({symbol:lastSymbol, direction:'bull', trigger:parseFloat(bull[2]), targets, status:'pending', schwabStatus:'pending'});
+      results.push({ symbol:lastSym, direction:'bull', trigger:parseFloat(bull[2]), targets, status:'pending', schwabStatus:'pending' });
       continue;
     }
     const bear = t.match(/^(?:([A-Z]{1,6})\s+)?Bearish below\s+([\d.]+).*?\(TGT\s+([\d.,\s]+)\)/i);
-    if(bear) {
-      const symbol = bear[1] ? bear[1].toUpperCase() : lastSymbol;
-      if(!symbol) continue;
+    if (bear) {
+      const sym = bear[1] ? bear[1].toUpperCase() : lastSym;
+      if (!sym) continue;
       const targets = bear[3].split(',').map(x=>parseFloat(x.trim())).filter(x=>!isNaN(x));
-      results.push({symbol, direction:'bear', trigger:parseFloat(bear[2]), targets, status:'pending', schwabStatus:'pending'});
+      results.push({ symbol:sym, direction:'bear', trigger:parseFloat(bear[2]), targets, status:'pending', schwabStatus:'pending' });
     }
   }
-  if(!results.length) { msg.innerHTML='<div class="msg msg-err">No setups found — check format</div>'; return; }
+  if (!results.length) { msg.innerHTML = '<div class="msg msg-err">No setups found — check format</div>'; return; }
   parsedSetups = results;
-  document.getElementById('setups-section').style.display='';
-  if(mode === 'auto') {
-    msg.innerHTML='<div class="msg msg-info"><span class="spinner"></span>Auto mode — placing '+results.length+' orders now...</div>';
+  document.getElementById('setups-section').style.display = '';
+  if (wlMode === 'auto') {
+    msg.innerHTML = '<div class="msg msg-info"><span class="spinner"></span>Auto placing ' + results.length + ' orders...</div>';
     renderSetups();
     await placeAllOrders();
   } else {
-    msg.innerHTML='<div class="msg msg-ok">Parsed '+results.length+' setups — review below</div>';
+    msg.innerHTML = '<div class="msg msg-ok">Parsed ' + results.length + ' setups</div>';
     renderSetups();
   }
 }
 
 function renderSetups() {
   const el = document.getElementById('setups-list');
-  if(!parsedSetups.length) { el.innerHTML='<div class="empty">No setups</div>'; return; }
-  el.innerHTML = parsedSetups.map((s,i) => {
-    const sl = calcStopLoss(s.trigger, s.direction);
-    const statusBadge = s.status==='placed'?'badge-placed':s.status==='error'?'badge-error':'badge-pending';
-    const statusLabel = s.status==='placed'?'✓ Placed':s.status==='error'?'✗ Error':'Pending';
-    const side = s.direction==='bull'?'buy':'sell';
-    const showButtons = s.status !== 'placed' && mode === 'manual';
+  if (!parsedSetups.length) { el.innerHTML = '<div class="empty">No setups</div>'; return; }
+  el.innerHTML = parsedSetups.map((s, i) => {
+    const sl = calcSL(s.trigger, s.direction);
+    const sb = s.status==='placed'?'badge-active':s.status==='error'?'badge-loss':'badge-pending';
+    const sl2 = s.status==='placed'?'✓ Placed':s.status==='error'?'✗ Error':'Pending';
+    const show = s.status !== 'placed' && wlMode === 'manual';
     return `<div class="setup-row ${s.status==='placed'?'placed-row':''}">
       <span class="symbol">${s.symbol}</span>
       <span class="badge ${s.direction==='bull'?'badge-bull':'badge-bear'}">${s.direction==='bull'?'▲ Bull':'▼ Bear'}</span>
-      <span class="detail">
-        ${side} @ $${s.trigger}<br/>
-        <span class="tgt">TP $${s.targets[0]}</span> &nbsp;·&nbsp; <span class="sl">SL $${sl}</span>
-      </span>
-      <span class="badge ${statusBadge}">${statusLabel}</span>
-      ${showButtons
+      <span class="detail">@ $${s.trigger}<br/><span class="tgt">TP $${s.targets[0]}</span> · <span class="sl">SL $${sl}</span></span>
+      <span class="badge ${sb}">${sl2}</span>
+      ${show
         ? `<div style="display:flex;gap:5px;flex-wrap:wrap;">
-            <button class="btn-success btn btn-sm" onclick="placeSingle(${i})" ${s.status==='placed'?'disabled':''}>
-              ${s.status==='placed'?'✓ Alpaca':'Alpaca'}
-            </button>
-            <button class="btn-schwab btn btn-sm" onclick="placeSchwabSingle(${i})" ${s.schwabStatus==='placed'?'disabled':''}>
-              ${s.schwabStatus==='placed'?'✓ Schwab':'🟡 Schwab'}
-            </button>
-            <button class="btn-danger btn btn-sm" onclick="removeSetup(${i})">✕</button>
-           </div>`
+            <button class="btn-success btn-sm" onclick="placeSingle(${i})">Alpaca</button>
+            <button class="btn-danger btn-sm" onclick="removeSetup(${i})">✕</button>
+          </div>`
         : '<span></span>'}
     </div>`;
   }).join('');
@@ -474,30 +1264,27 @@ function renderSetups() {
 function removeSetup(i) { parsedSetups.splice(i,1); renderSetups(); }
 
 async function submitBracket(s) {
-  const r = await fetch(PROXY+'/trade', {
+  const settings = loadSettings();
+  const r = await fetch('/trade', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-webhook-secret': 'alpaca-secret-jeff-2020' },
+    headers: { 'Content-Type':'application/json', 'x-webhook-secret':'alpaca-secret-jeff-2020' },
     body: JSON.stringify({
-      symbol: s.symbol,
-      direction: s.direction,
-      trigger: s.trigger,
-      targets: s.targets,
-      maxDollars: parseFloat(document.getElementById('maxDollars').value) || 10000,
-      stopLossPct: parseFloat(document.getElementById('stopLossPct').value) || 3,
+      symbol: s.symbol, direction: s.direction, trigger: s.trigger, targets: s.targets,
+      maxDollars: settings.maxDollars, stopLossPct: settings.stopLossPct,
       mode: orderMode,
-      trailPct: parseFloat(document.getElementById('trailPct')?.value) || 1.5
+      trailPct: parseFloat(document.getElementById('trailPct')?.value) || settings.trailPct
     })
   });
   const d = await r.json();
-  if(!r.ok) throw new Error(d.error||JSON.stringify(d));
+  if (!r.ok) throw new Error(d.error || JSON.stringify(d));
   return d;
 }
 
 async function placeSingle(i) {
   const s = parsedSetups[i];
   const rows = document.querySelectorAll('.setup-row');
-  const btn = rows[i] ? rows[i].querySelector('.btn-success') : null;
-  if(btn) { btn.disabled=true; btn.innerHTML='<span class="spinner"></span>'; }
+  const btn = rows[i]?.querySelector('.btn-success');
+  if (btn) { btn.disabled=true; btn.innerHTML='<span class="spinner"></span>'; }
   try {
     await submitBracket(s);
     parsedSetups[i].status = 'placed';
@@ -508,451 +1295,99 @@ async function placeSingle(i) {
   renderSetups();
 }
 
-async function submitSchwabBracket(s) {
-  const r = await fetch(PROXY+'/schwab/bracket', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      symbol: s.symbol,
-      direction: s.direction,
-      trigger: s.trigger,
-      targets: s.targets,
-      maxDollars: parseFloat(document.getElementById('maxDollars').value) || 10000,
-      stopLossPct: parseFloat(document.getElementById('stopLossPct').value) || 3
-    })
-  });
-  const d = await r.json();
-  if(!r.ok) throw new Error(d.error||JSON.stringify(d));
-  return d;
-}
-
-async function placeSchwabSingle(i) {
-  const s = parsedSetups[i];
-  const rows = document.querySelectorAll('.setup-row');
-  const btn = rows[i] ? rows[i].querySelectorAll('button')[1] : null;
-  if(btn) { btn.disabled=true; btn.innerHTML='<span class="spinner"></span>'; }
-  try {
-    await submitSchwabBracket(s);
-    parsedSetups[i].schwabStatus = 'placed';
-  } catch(e) {
-    parsedSetups[i].schwabStatus = 'error';
-    alert('Schwab error for '+s.symbol+': '+e.message);
-  }
-  renderSetups();
-}
-
 async function placeAllOrders() {
   const pending = parsedSetups.filter(s=>s.status==='pending');
-  if(!pending.length) { document.getElementById('place-all-msg').innerHTML='<div class="msg msg-info">All orders already placed</div>'; return; }
+  if (!pending.length) { document.getElementById('place-all-msg').innerHTML='<div class="msg msg-info">All orders already placed</div>'; return; }
   const msg = document.getElementById('place-all-msg');
   const btn = document.getElementById('btn-place-all');
-  if(btn) { btn.disabled=true; btn.innerHTML='<span class="spinner"></span>Placing...'; }
-  msg.innerHTML='<div class="msg msg-info"><span class="spinner"></span>Placing '+pending.length+' bracket orders...</div>';
-  let success=0, failed=0;
-  for(const s of parsedSetups) {
-    if(s.status !== 'pending') continue;
-    try {
-      await submitBracket(s);
-      s.status = 'placed';
-      success++;
-    } catch(e) {
-      s.status = 'error';
-      s.errorMsg = e.message;
-      failed++;
-    }
+  if (btn) { btn.disabled=true; btn.innerHTML='<span class="spinner"></span>Placing...'; }
+  msg.innerHTML = '<div class="msg msg-info"><span class="spinner"></span>Placing '+pending.length+' orders...</div>';
+  let ok=0, fail=0;
+  for (const s of parsedSetups) {
+    if (s.status !== 'pending') continue;
+    try { await submitBracket(s); s.status='placed'; ok++; }
+    catch(e) { s.status='error'; s.errorMsg=e.message; fail++; }
     renderSetups();
     await new Promise(r=>setTimeout(r,300));
   }
-  if(btn) { btn.disabled=false; btn.textContent='Place all bracket orders'; }
-  msg.innerHTML = failed===0
-    ? '<div class="msg msg-ok">✓ All '+success+' orders placed — bulls to bull account, bears to bear account</div>'
-    : '<div class="msg msg-err">'+success+' placed, '+failed+' failed</div>';
+  if (btn) { btn.disabled=false; btn.textContent=orderMode==='multi'?'Place all multi-target orders':'Place all bracket orders'; }
+  msg.innerHTML = fail===0
+    ? '<div class="msg msg-ok">✓ '+ok+' orders placed</div>'
+    : '<div class="msg msg-err">'+ok+' placed, '+fail+' failed</div>';
 }
 
-// ── Orders tab ───────────────────────────────────────────────────────────────
+// ── Orders tab ─────────────────────────────────────────────────────────────────
 async function refreshOrders() {
   const el = document.getElementById('orders-list');
-  el.innerHTML='<div class="empty"><span class="spinner"></span>Loading...</div>';
+  el.innerHTML = '<div class="empty"><span class="spinner"></span>Loading...</div>';
   try {
     const after = new Date(Date.now()-30*24*60*60*1000).toISOString();
     const qs = '/orders?status=all&limit=100&nested=true&direction=desc&after='+encodeURIComponent(after);
-    const [bullRes, bearRes] = await Promise.all([
-      fetch(PROXY+'/alpaca-bull'+qs),
-      fetch(PROXY+'/alpaca-bear'+qs)
-    ]);
-    const bullOrders = bullRes.ok ? (await bullRes.json()).map(o=>({...o,_acct:'bull'})) : [];
-    const bearOrders = bearRes.ok ? (await bearRes.json()).map(o=>({...o,_acct:'bear'})) : [];
-
-    const all = [...bullOrders, ...bearOrders]
-      .sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
-
+    const [br, bar] = await Promise.all([fetch('/alpaca-bull'+qs), fetch('/alpaca-bear'+qs)]);
+    const bull = br.ok ? (await br.json()).map(o=>({...o,_acct:'bull'})) : [];
+    const bear = bar.ok ? (await bar.json()).map(o=>({...o,_acct:'bear'})) : [];
     const seen = new Set();
-    const orders = all.filter(o => { if(seen.has(o.id)) return false; seen.add(o.id); return true; });
-
-    if(!orders.length){el.innerHTML='<div class="empty">No orders found</div>';return;}
-    el.innerHTML='<div class="card">'+orders.map(o=>{
-      const sc=o.status==='filled'?'badge-filled':o.status==='canceled'?'badge-canceled':'badge-new';
-      const isBracket = o.order_class==='bracket';
-      const tp = o.legs ? o.legs.find(l=>l.type==='limit'&&l.side!==o.side) : null;
-      const sl = o.legs ? o.legs.find(l=>l.type==='stop_limit'||l.type==='stop') : null;
-      const acctBadge = o._acct==='bull'
-        ? '<span class="badge badge-bull">▲ BULL</span>'
-        : '<span class="badge badge-bear">▼ BEAR</span>';
-      return `<div class="trade-row">
-        <div style="min-width:52px;font-family:var(--mono);font-weight:500;">${o.symbol}</div>
-        <div style="display:flex;flex-direction:column;gap:5px;flex:1;">
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+    const all = [...bull,...bear]
+      .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))
+      .filter(o=>{ if(seen.has(o.id)) return false; seen.add(o.id); return true; });
+    if (!all.length) { el.innerHTML='<div class="empty">No orders found</div>'; return; }
+    el.innerHTML = '<div class="card">' + all.map(o => {
+      const sc = o.status==='filled'?'badge-filled':o.status==='canceled'?'badge-closed':'badge-pending';
+      const tp = o.legs?.find(l=>l.type==='limit'&&l.side!==o.side);
+      const sl = o.legs?.find(l=>l.type==='stop_limit'||l.type==='stop');
+      const acctBadge = o._acct==='bull'?'<span class="badge badge-bull" style="font-size:10px;">BULL</span>':'<span class="badge badge-bear" style="font-size:10px;">BEAR</span>';
+      const canCancel = ['new','accepted','held'].includes(o.status);
+      return `<div class="orders-row">
+        <div class="ord-sym">${o.symbol}</div>
+        <div style="display:flex;flex-direction:column;gap:4px;flex:1;">
+          <div style="display:flex;gap:5px;flex-wrap:wrap;">
             ${acctBadge}
-            <span class="badge ${o.side==='buy'?'badge-bull':'badge-bear'}">${o.side==='buy'?'▲':'▼'} ${o.side}</span>
-            <span class="badge ${sc}">${o.status}</span>
-            ${isBracket?'<span class="badge" style="background:#2a2a35;color:var(--muted);">bracket</span>':''}
+            <span class="badge ${o.side==='buy'?'badge-bull':'badge-bear'}" style="font-size:10px;">${o.side}</span>
+            <span class="badge ${sc}" style="font-size:10px;">${o.status}</span>
+            ${o.order_class==='bracket'?'<span class="badge badge-gray" style="font-size:10px;">bracket</span>':''}
           </div>
-          <div class="order-detail">
-            entry: stop $${parseFloat(o.stop_price||0).toFixed(2)} · limit $${parseFloat(o.limit_price||0).toFixed(2)} · ${o.qty} sh
-            ${tp?'<br/><span style="color:#4ade80;">take-profit: $'+parseFloat(tp.limit_price||0).toFixed(2)+'</span>':''}
-            ${sl?'<br/><span style="color:#f87171;">stop-loss: $'+parseFloat(sl.stop_price||0).toFixed(2)+'</span>':''}
+          <div class="ord-detail">
+            stop $${parseFloat(o.stop_price||0).toFixed(2)} · limit $${parseFloat(o.limit_price||0).toFixed(2)} · ${o.qty} sh · ${fmtTime(o.created_at)} ET
+            ${tp?`<br/><span style="color:var(--green)">TP $${parseFloat(tp.limit_price||0).toFixed(2)}</span>`:''}
+            ${sl?`<br/><span style="color:var(--red)">SL $${parseFloat(sl.stop_price||0).toFixed(2)}</span>`:''}
+            ${o.filled_avg_price?`<br/>Filled @ $${parseFloat(o.filled_avg_price).toFixed(2)}`:''}
           </div>
         </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          ${o.status==='new'||o.status==='accepted'||o.status==='held'
-            ? `<button class="btn-danger btn btn-sm" onclick="cancelOrder('${o.id}','${o._acct}')">Cancel</button>`
-            : ''}
-          ${o.status==='filled'&&o.order_class==='bracket'
-            ? `<button class="btn-danger btn btn-sm" onclick="closePosition('${o.symbol}','${o._acct}')">Close</button>`
-            : ''}
+        <div style="display:flex;gap:5px;flex-wrap:wrap;">
+          ${canCancel?`<button class="btn-danger btn-sm" onclick="cancelOrder('${o.id}','${o._acct}')">Cancel</button>`:''}
+          ${o.status==='filled'&&o.order_class==='bracket'?`<button class="btn-danger btn-sm" onclick="ordClosePos('${o.symbol}','${o._acct}')">Close</button>`:''}
         </div>
       </div>`;
-    }).join('')+'</div>';
-  } catch(e){el.innerHTML='<div class="msg msg-err">'+e.message+'</div>';}
+    }).join('') + '</div>';
+  } catch(e) { el.innerHTML=`<div class="msg msg-err">${e.message}</div>`; }
 }
 
 async function cancelOrder(id, acct) {
-  try{
-    await fetch(PROXY+'/alpaca-'+acct+'/orders/'+id,{method:'DELETE'});
-    refreshOrders();
-  } catch(e){alert('Cancel failed: '+e.message);}
+  try { await fetch('/alpaca-'+acct+'/orders/'+id, {method:'DELETE'}); refreshOrders(); }
+  catch(e) { alert('Cancel failed: '+e.message); }
 }
-
-async function closePosition(symbol, acct) {
-  if(!confirm('Close '+acct.toUpperCase()+' position + cancel open legs for '+symbol+'?')) return;
+async function ordClosePos(sym, acct) {
+  if (!confirm('Close '+acct.toUpperCase()+' position for '+sym+'?')) return;
   try {
-    const r = await fetch(PROXY+'/alpaca-'+acct+'/positions/'+symbol, {method:'DELETE'});
-    if(!r.ok) { const d = await r.json(); alert('Error: '+(d.message||JSON.stringify(d))); return; }
+    const r = await fetch('/alpaca-'+acct+'/positions/'+sym, {method:'DELETE'});
+    if (!r.ok) { const d=await r.json(); alert('Error: '+(d.message||JSON.stringify(d))); return; }
+    setTimeout(refreshOrders, 800);
+  } catch(e) { alert('Error: '+e.message); }
+}
+async function cancelAllOrders() {
+  if (!confirm('Cancel all open orders in BOTH accounts?')) return;
+  try {
+    await Promise.all([fetch('/alpaca-bull/orders',{method:'DELETE'}),fetch('/alpaca-bear/orders',{method:'DELETE'})]);
     setTimeout(refreshOrders, 800);
   } catch(e) { alert('Error: '+e.message); }
 }
 
-async function cancelAllOrders() {
-  if(!confirm('Cancel all open orders in BOTH accounts?')) return;
-  try{
-    await Promise.all([
-      fetch(PROXY+'/alpaca-bull/orders',{method:'DELETE'}),
-      fetch(PROXY+'/alpaca-bear/orders',{method:'DELETE'})
-    ]);
-    setTimeout(refreshOrders,800);
-  } catch(e){alert('Error: '+e.message);}
-}
-
-// ── Monitor tab ──────────────────────────────────────────────────────────────
-
-function filterMonitor(type) {
-  monitorCurrentFilter = type;
-  ['all','position','pending','closed'].forEach(t => {
-    document.getElementById('filter-'+t).classList.toggle('active', t===type);
-  });
-  document.querySelectorAll('.mon-card').forEach(card => {
-    const ct = card.dataset.filterType;
-    card.style.display = (type==='all' || type===ct) ? '' : 'none';
-  });
-}
-
-function expandClose(key) {
-  const btn   = document.getElementById('closebtn_'+key);
-  const panel = document.getElementById('closepanel_'+key);
-  if(btn)   btn.style.display = 'none';
-  if(panel) panel.classList.add('open');
-}
-
-function collapseClose(key) {
-  const btn   = document.getElementById('closebtn_'+key);
-  const panel = document.getElementById('closepanel_'+key);
-  if(btn)   btn.style.display = '';
-  if(panel) panel.classList.remove('open');
-}
-
-async function submitMarketClose(symbol, acct, key) {
-  const btn = document.querySelector(`#closepanel_${key} .btn-market`);
-  if(btn) { btn.disabled=true; btn.innerHTML='<span class="spinner"></span>'; }
-  try {
-    const r = await fetch(PROXY+'/alpaca-'+acct+'/positions/'+symbol, {method:'DELETE'});
-    if(!r.ok) { const d=await r.json(); alert('Error: '+(d.message||JSON.stringify(d))); return; }
-    setTimeout(refreshMonitor, 800);
-  } catch(e) { alert('Error: '+e.message); }
-}
-
-async function submitLimitClose(symbol, acct, key) {
-  const input = document.getElementById('closeprice_'+key);
-  const data  = monitorCardData[key];
-  if(!input || !data) return;
-  const price = parseFloat(input.value);
-  if(!price || isNaN(price)) { alert('Enter a valid limit price'); return; }
-  const side = data.isLong ? 'sell' : 'buy';
-  const btn  = document.querySelector(`#closepanel_${key} .btn-limit-submit`);
-  if(btn) { btn.disabled=true; btn.innerHTML='<span class="spinner"></span>'; }
-  try {
-    const r = await fetch(PROXY+'/alpaca-'+acct+'/orders', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ symbol, qty: String(data.qty), side, type:'limit', limit_price: String(price), time_in_force:'day' })
-    });
-    const d = await r.json();
-    if(!r.ok) { alert('Error: '+(d.message||JSON.stringify(d))); return; }
-    setTimeout(refreshMonitor, 800);
-  } catch(e) { alert('Error: '+e.message); }
-}
-
-async function monitorCancelOrder(id, acct) {
-  try {
-    await fetch(PROXY+'/alpaca-'+acct+'/orders/'+id, {method:'DELETE'});
-    refreshMonitor();
-  } catch(e){alert('Cancel failed: '+e.message);}
-}
-
-async function refreshMonitor() {
-  const el = document.getElementById('monitor-list');
-  el.innerHTML = '<div class="empty"><span class="spinner"></span>Loading...</div>';
-  try {
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const ordQs = '/orders?status=all&limit=200&nested=true&direction=desc&after='+encodeURIComponent(todayStart.toISOString());
-
-    const [bullPosRes, bearPosRes, bullOrdRes, bearOrdRes] = await Promise.all([
-      fetch(PROXY+'/alpaca-bull/positions'),
-      fetch(PROXY+'/alpaca-bear/positions'),
-      fetch(PROXY+'/alpaca-bull'+ordQs),
-      fetch(PROXY+'/alpaca-bear'+ordQs)
-    ]);
-
-    const bullPos = bullPosRes.ok ? (await bullPosRes.json()).map(p=>({...p,_acct:'bull'})) : [];
-    const bearPos = bearPosRes.ok ? (await bearPosRes.json()).map(p=>({...p,_acct:'bear'})) : [];
-    const bullOrd = bullOrdRes.ok ? (await bullOrdRes.json()).map(o=>({...o,_acct:'bull'})) : [];
-    const bearOrd = bearOrdRes.ok ? (await bearOrdRes.json()).map(o=>({...o,_acct:'bear'})) : [];
-
-    const posMap = {};
-    for(const p of [...bullPos,...bearPos]) posMap[p.symbol+'|'+p._acct] = p;
-
-    const seen = new Set();
-    const byKey = {};
-    for(const o of [...bullOrd,...bearOrd]) {
-      if(seen.has(o.id)) continue; seen.add(o.id);
-      const k = o.symbol+'|'+o._acct;
-      if(!byKey[k]) byKey[k] = [];
-      byKey[k].push(o);
-    }
-    for(const k of Object.keys(posMap)) { if(!byKey[k]) byKey[k] = []; }
-
-    const keys = Object.keys(byKey);
-    if(!keys.length){el.innerHTML='<div class="empty">No orders or positions today</div>';return;}
-
-    const symbols = [...new Set(keys.map(k=>k.split('|')[0]))];
-    const snapRes = await fetch(PROXY+'/alpaca-data/stocks/snapshots?symbols='+encodeURIComponent(symbols.join(',')));
-    const snaps = snapRes.ok ? await snapRes.json() : {};
-
-    const OPEN = ['new','accepted','held','partially_filled'];
-
-    keys.sort((a,b)=>{
-      const rank = k => posMap[k] ? 0 : byKey[k].some(o=>OPEN.includes(o.status)) ? 1 : 2;
-      return rank(a)-rank(b);
-    });
-
-    const cards = keys.map(key => {
-      const [symbol, acct] = key.split('|');
-      const domKey = symbol+'_'+acct; // safe for DOM IDs
-      const pos    = posMap[key];
-      const orders = byKey[key];
-      const snap   = snaps[symbol];
-      const current = snap
-        ? parseFloat(snap.latestTrade?.p || snap.minuteBar?.c || (pos&&pos.current_price) || 0)
-        : parseFloat((pos&&pos.current_price) || 0);
-
-      const order   = orders.find(o=>o.status==='filled') || orders.find(o=>OPEN.includes(o.status)) || orders[0];
-      const hasFill = !!pos;
-      const isPending  = !hasFill && order && OPEN.includes(order.status);
-      const isCanceled = !hasFill && (!order || ['canceled','expired'].includes(order.status));
-      const isLong     = pos ? pos.side==='long' : order ? order.side==='buy' : true;
-      const qty        = pos ? Math.abs(parseFloat(pos.qty)) : order ? Math.abs(parseFloat(order.qty||0)) : 0;
-
-      const legs  = (order&&order.legs)||[];
-      const tpLeg = legs.find(l=>l.type==='limit'&&l.side!==(order&&order.side));
-      const slLeg = legs.find(l=>l.type==='stop_limit'||l.type==='stop');
-      const tp    = tpLeg ? parseFloat(tpLeg.limit_price) : null;
-      const sl    = slLeg ? parseFloat(slLeg.stop_price) : null;
-
-      const filledExitLeg = !hasFill && order && order.status==='filled'
-        ? legs.find(l=>l.status==='filled') : null;
-      const isCompleted = !!filledExitLeg;
-
-      // Store for close panel
-      monitorCardData[domKey] = { qty, isLong, tp, current };
-
-      const acctBadge = acct==='bull'
-        ? '<span class="badge badge-bull">▲ BULL</span>'
-        : '<span class="badge badge-bear">▼ BEAR</span>';
-      const dirBadge = `<span class="badge ${isLong?'badge-bull':'badge-bear'}">${isLong?'▲ Long':'▼ Short'}</span>`;
-
-      // ── POSITION card ────────────────────────────────────────────────────
-      if(hasFill) {
-        const entry   = parseFloat(pos.avg_entry_price);
-        const pnl     = (current - entry) * parseFloat(pos.qty) * (pos.side==='long' ? 1 : -1);
-        const pnlPct  = pnl / (entry * Math.abs(parseFloat(pos.qty))) * 100;
-        const pnlColor = pnl >= 0 ? 'var(--accent)' : 'var(--red)';
-        const tpPct   = (tp && current) ? (tp - current) / current * 100 : null;
-        const slPct   = (sl && current) ? (sl - current) / current * 100 : null;
-        const defaultLimitPrice = tp ? tp.toFixed(2) : current.toFixed(2);
-
-        return `<div class="mon-card" data-filter-type="position">
-          <div class="mon-header">
-            <span class="mon-sym">${symbol}</span>${acctBadge}${dirBadge}
-            ${qty ? `<span class="badge" style="background:#2a2a35;color:var(--muted);">${qty} sh</span>` : ''}
-            <span class="badge badge-filled">filled</span>
-          </div>
-          <div class="mon-prices">
-            <div>
-              <div class="mon-price">${current ? fmt(current) : '—'}</div>
-              <div class="mon-entry">entry ${fmt(entry)}</div>
-            </div>
-            <div class="mon-pnl" style="color:${pnlColor};">
-              ${sign(pnl)}${fmt(pnl)}<br>
-              <span style="font-size:12px;">${sign(pnlPct)}${pnlPct.toFixed(2)}%</span>
-            </div>
-          </div>
-          <div class="mon-stats">
-            <div class="mon-stat">
-              <div class="mon-stat-label">TP</div>
-              ${tp!=null
-                ? `<div class="mon-stat-val" style="color:var(--accent);">${fmt(tp)}</div>
-                   ${tpPct!=null ? `<div class="mon-stat-dist">${sign(tpPct)}${tpPct.toFixed(2)}%</div>` : ''}`
-                : '<div class="mon-stat-val" style="color:var(--muted);">—</div>'}
-            </div>
-            <div class="mon-stat">
-              <div class="mon-stat-label">SL</div>
-              ${sl!=null
-                ? `<div class="mon-stat-val" style="color:var(--red);">${fmt(sl)}</div>
-                   ${slPct!=null ? `<div class="mon-stat-dist">${sign(slPct)}${slPct.toFixed(2)}%</div>` : ''}`
-                : '<div class="mon-stat-val" style="color:var(--muted);">—</div>'}
-            </div>
-          </div>
-          <button class="btn-danger btn close-trigger" id="closebtn_${domKey}" onclick="expandClose('${domKey}')">Close Position</button>
-          <div class="close-panel" id="closepanel_${domKey}">
-            <button class="btn-danger btn btn-market" onclick="submitMarketClose('${symbol}','${acct}','${domKey}')">Market — close now</button>
-            <div class="close-panel-row">
-              <span style="font-size:12px;color:var(--muted);white-space:nowrap;">Limit</span>
-              <input type="number" id="closeprice_${domKey}" value="${defaultLimitPrice}" step="0.01" />
-            </div>
-            <div class="close-panel-actions">
-              <button class="btn-danger btn btn-limit-submit" onclick="submitLimitClose('${symbol}','${acct}','${domKey}')">Submit limit</button>
-              <button class="btn btn-sm" onclick="collapseClose('${domKey}')">✕</button>
-            </div>
-          </div>
-        </div>`;
-      }
-
-      // ── PENDING card ─────────────────────────────────────────────────────
-      if(isPending && order) {
-        const trigger  = parseFloat(order.stop_price || order.limit_price || 0);
-        const distance = (trigger && current) ? Math.abs(trigger - current) : null;
-        const tpPct    = (tp && current) ? (tp - current) / current * 100 : null;
-        const slPct    = (sl && current) ? (sl - current) / current * 100 : null;
-
-        return `<div class="mon-card" data-filter-type="pending">
-          <div class="mon-header">
-            <span class="mon-sym">${symbol}</span>${acctBadge}${dirBadge}
-            ${qty ? `<span class="badge" style="background:#2a2a35;color:var(--muted);">${qty} sh</span>` : ''}
-            <span class="badge badge-pending">pending</span>
-          </div>
-          <div class="mon-prices">
-            <div>
-              <div class="mon-price">${current ? fmt(current) : '—'}</div>
-              <div class="mon-entry">${trigger ? 'trigger '+fmt(trigger) : order.type||''}</div>
-            </div>
-            ${distance!=null ? `<div class="mon-dist">${fmt(distance)}<br><span style="font-size:11px;color:var(--muted);">away</span></div>` : ''}
-          </div>
-          <div class="mon-stats">
-            <div class="mon-stat">
-              <div class="mon-stat-label">TP</div>
-              ${tp!=null
-                ? `<div class="mon-stat-val" style="color:var(--accent);">${fmt(tp)}</div>
-                   ${tpPct!=null ? `<div class="mon-stat-dist">${sign(tpPct)}${tpPct.toFixed(2)}%</div>` : ''}`
-                : '<div class="mon-stat-val" style="color:var(--muted);">—</div>'}
-            </div>
-            <div class="mon-stat">
-              <div class="mon-stat-label">SL</div>
-              ${sl!=null
-                ? `<div class="mon-stat-val" style="color:var(--red);">${fmt(sl)}</div>
-                   ${slPct!=null ? `<div class="mon-stat-dist">${sign(slPct)}${slPct.toFixed(2)}%</div>` : ''}`
-                : '<div class="mon-stat-val" style="color:var(--muted);">—</div>'}
-            </div>
-          </div>
-          <button class="btn-danger btn" style="width:100%;" onclick="monitorCancelOrder('${order.id}','${acct}')">Cancel Order</button>
-        </div>`;
-      }
-
-      // ── CLOSED card ───────────────────────────────────────────────────────
-      let exitPrice = null, entryPrice = null, pnl = null, pnlPct = null, pnlColor = 'var(--muted)';
-      let exitLabel = 'exit', targetVal = tp;
-      if(isCompleted && order) {
-        entryPrice = parseFloat(order.filled_avg_price || 0);
-        exitPrice  = parseFloat(filledExitLeg.filled_avg_price || 0);
-        const filledQty = parseFloat(order.filled_qty || order.qty || 0);
-        pnl    = (order.side==='buy' ? exitPrice - entryPrice : entryPrice - exitPrice) * filledQty;
-        pnlPct = entryPrice ? pnl / (entryPrice * filledQty) * 100 : 0;
-        pnlColor = pnl >= 0 ? 'var(--accent)' : 'var(--red)';
-        exitLabel = filledExitLeg.type==='limit' ? 'take-profit' : 'stop-loss';
-      } else if(order) {
-        entryPrice = parseFloat(order.filled_avg_price || order.stop_price || 0);
-      }
-
-      const statusBadge = isCanceled ? 'badge-canceled' : 'badge-filled';
-      const statusLabel = isCanceled ? order ? order.status : 'canceled' : 'closed';
-
-      return `<div class="mon-card" style="opacity:0.6;" data-filter-type="closed">
-        <div class="mon-header">
-          <span class="mon-sym">${symbol}</span>${acctBadge}${dirBadge}
-          <span class="badge ${statusBadge}">${statusLabel}</span>
-        </div>
-        ${exitPrice!=null || entryPrice!=null ? `
-        <div class="mon-prices">
-          <div>
-            <div class="mon-price">${exitPrice ? fmt(exitPrice) : '—'}</div>
-            <div class="mon-entry">${entryPrice ? 'entry '+fmt(entryPrice) : ''} ${exitLabel ? '· '+exitLabel : ''}</div>
-          </div>
-          ${pnl!=null ? `<div class="mon-pnl" style="color:${pnlColor};">
-            ${sign(pnl)}${fmt(pnl)}<br>
-            <span style="font-size:12px;">${sign(pnlPct)}${pnlPct.toFixed(2)}%</span>
-          </div>` : ''}
-        </div>` : ''}
-        <div class="mon-stats">
-          <div class="mon-stat">
-            <div class="mon-stat-label">Exit</div>
-            <div class="mon-stat-val">${exitPrice ? fmt(exitPrice) : '—'}</div>
-          </div>
-          <div class="mon-stat">
-            <div class="mon-stat-label">Target</div>
-            <div class="mon-stat-val" style="color:var(--accent);">${targetVal ? fmt(targetVal) : '—'}</div>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-
-    el.innerHTML = `<div class="monitor-grid">${cards}</div>`;
-
-    // Re-apply active filter after re-render
-    filterMonitor(monitorCurrentFilter);
-
-  } catch(e) {
-    el.innerHTML = '<div class="msg msg-err">'+e.message+'</div>';
-  }
-}
+// ── Init ───────────────────────────────────────────────────────────────────────
+document.getElementById('dash-date').value = todayET();
+document.getElementById('sum-custom-date').value = todayET();
+loadMetrics();
+setInterval(loadMetrics, 60000);
+showTab('dashboard');
 </script>
 </body>
 </html>
