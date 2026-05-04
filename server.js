@@ -18,7 +18,8 @@ const TELEGRAM_TOKEN = '8537812125:AAGQDJEDEp8E9ewfpiBk3kL7hKqCY2dWIyQ';
 const TELEGRAM_CHAT_ID = 8018343254;
 
 // ── SQLite Database ────────────────────────────────────────────────────────────
-const db = new Database(path.join(__dirname, 'trading.db'));
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'trading.db');
+const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
 db.exec(`
