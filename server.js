@@ -791,28 +791,37 @@ async function pollAccount(key, secret, label) {
 
       await sendTradeNotification(order, label);
 
-      // Save filled entry orders to trades DB
+      // Save filled entry orders to trades DB (skip exit legs)
       try {
-        if (order.order_class === 'bracket') {
-          const direction = order.side === 'buy' ? 'bull' : 'bear';
+        const isExitOrder = !!exitToEntry[order.id];
+        if (!isExitOrder) {
+          const direction  = (meta?.isBull !== undefined) ? (meta.isBull ? 'bull' : 'bear') : (order.side === 'buy' ? 'bull' : 'bear');
           const entryPrice = parseFloat(order.filled_avg_price || 0);
           const shares     = parseFloat(order.filled_qty || order.qty || 0);
           const entryTimeET = order.filled_at
             ? new Date(order.filled_at).toLocaleString('en-US', { timeZone: 'America/New_York' })
             : nowETStr();
-          const legs = order.legs || [];
-          const tpLeg = legs.find(l => l.type === 'limit');
-          const slLeg = legs.find(l => l.type === 'stop_limit' || l.type === 'stop');
+          let t1Price = null, slPrice = null, orderMode = 'manual';
+          if (order.order_class === 'bracket') {
+            orderMode = 'bracket';
+            const legs = order.legs || [];
+            const tpLeg = legs.find(l => l.type === 'limit');
+            const slLeg = legs.find(l => l.type === 'stop_limit' || l.type === 'stop');
+            t1Price = tpLeg ? parseFloat(tpLeg.limit_price) : null;
+            slPrice = slLeg ? parseFloat(slLeg.stop_price)  : null;
+          } else if (meta?.mode === 'multi') {
+            orderMode = 'multi';
+            t1Price = meta.target1 ? parseFloat(meta.target1) : null;
+            slPrice = meta.stopLossPrice ? parseFloat(meta.stopLossPrice) : null;
+          }
           db.prepare(`
             INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode)
-            VALUES (?,?,?,?,?,?,?,?,?,?,'bracket')
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(alpaca_order_id) DO NOTHING
           `).run(
             order.id, order.symbol, direction, label.toLowerCase(),
             entryPrice, shares, entryPrice * shares,
-            tpLeg ? parseFloat(tpLeg.limit_price) : null,
-            slLeg ? parseFloat(slLeg.stop_price)  : null,
-            entryTimeET
+            t1Price, slPrice, entryTimeET, orderMode
           );
         }
       } catch(e) { console.error(`[${label}] DB trade save error:`, e.message); }
