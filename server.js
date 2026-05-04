@@ -58,6 +58,10 @@ db.exec(`
   );
 `);
 
+// Add columns for multi-target order tracking (safe to run on existing DB)
+try { db.exec(`ALTER TABLE trades ADD COLUMN sl_order_id TEXT`); } catch(e) {}
+try { db.exec(`ALTER TABLE trades ADD COLUMN trail_order_id TEXT`); } catch(e) {}
+
 function dateET(d) {
   return new Date(d || Date.now()).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
@@ -663,6 +667,10 @@ async function placeMultiTargetExits(entryOrder, meta, key, secret) {
     if (placed.trailOrderId) exitToEntry[placed.trailOrderId] = entryOrder.id;
     if (placed.slOrderId)    exitToEntry[placed.slOrderId]    = entryOrder.id;
     saveOrderMetadata();
+    try {
+      db.prepare(`UPDATE trades SET sl_order_id=?, trail_order_id=? WHERE alpaca_order_id=?`)
+        .run(placed.slOrderId || null, placed.trailOrderId || null, entryOrder.id);
+    } catch(e) { console.error('Failed to save SL/trail order IDs to trades:', e.message); }
   } catch(e) {
     console.error(`[${label}] Multi-target exits error: ${e.message}`);
     await sendTelegram(`⚠️ [${label}] Failed to place multi exits for ${symbol}: ${e.message}`).catch(() => {});
@@ -670,26 +678,17 @@ async function placeMultiTargetExits(entryOrder, meta, key, secret) {
 }
 
 async function handleTarget2Fill(entryId, meta, key, secret) {
-  const { symbol, target1, label, exitOrderIds } = meta;
-  const qty    = meta.filledQty || meta.qty;
-  const share3 = qty - 2 * Math.floor(qty / 3);
-  const side   = meta.isBull ? 'sell' : 'buy';
+  const { symbol, label, exitOrderIds } = meta;
   const headers = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret, 'Content-Type': 'application/json' };
   if (exitOrderIds?.slOrderId) {
-    try { await fetch(`${ALPACA_BASE}/orders/${exitOrderIds.slOrderId}`, { method:'DELETE', headers }); }
-    catch(e) { console.error(`Cancel SL error: ${e.message}`); }
+    try {
+      await fetch(`${ALPACA_BASE}/orders/${exitOrderIds.slOrderId}`, { method:'DELETE', headers });
+      console.log(`[${label}] Cancelled stop loss ${exitOrderIds.slOrderId} after T2 fill for ${symbol}`);
+    } catch(e) { console.error(`[${label}] Cancel SL error: ${e.message}`); }
   }
-  try {
-    const r = await fetch(`${ALPACA_BASE}/orders`, {
-      method: 'POST', headers,
-      body: JSON.stringify({ symbol, qty: String(share3), side, type:'stop', stop_price:String(target1), time_in_force:'day' })
-    });
-    const d = await r.json();
-    if (d.id) { meta.exitOrderIds.slOrderId = d.id; exitToEntry[d.id] = entryId; }
-    meta.status = 'target2_filled';
-    saveOrderMetadata();
-    await sendTelegram(`🎯 [${label}] T2 filled for ${symbol} — stop moved to T1 $${target1} for ${share3} shares`);
-  } catch(e) { console.error(`[${label}] handleTarget2Fill error: ${e.message}`); }
+  meta.status = 'target2_filled';
+  saveOrderMetadata();
+  await sendTelegram(`🎯 [${label}] T2 filled for ${symbol} — stop loss cancelled, trailing stop now protecting final position`).catch(e => console.error('Telegram error:', e.message));
 }
 
 // ── Order metadata persistence ─────────────────────────────────────────────────
