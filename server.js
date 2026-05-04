@@ -61,6 +61,7 @@ db.exec(`
 // Add columns for multi-target order tracking (safe to run on existing DB)
 try { db.exec(`ALTER TABLE trades ADD COLUMN sl_order_id TEXT`); } catch(e) {}
 try { db.exec(`ALTER TABLE trades ADD COLUMN trail_order_id TEXT`); } catch(e) {}
+try { db.exec(`ALTER TABLE trades ADD COLUMN status TEXT DEFAULT 'pending'`); } catch(e) {}
 
 function dateET(d) {
   return new Date(d || Date.now()).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
@@ -393,6 +394,10 @@ app.post('/trade', async (req, res) => {
         acct: isBull ? 'bull' : 'bear', status: 'pending_fill', exitOrderIds: null, qty
       };
       saveOrderMetadata();
+      try {
+        db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status) VALUES (?,?,?,?,?,?,?,?,?,?,'multi','pending') ON CONFLICT(alpaca_order_id) DO NOTHING`)
+          .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr());
+      } catch(e) { console.error('DB pending save error:', e.message); }
       console.log(`[${label}] Multi-target trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
       await sendTelegram(`${acctEmoji} [${label}] Multi-target placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nT1 $${tp}${t2 ? ` · T2 $${t2}` : ''} · Trail ${trail}% · SL $${sl} ${acctEmoji}`);
       return res.json({ ok: true, order: d, orderId: d.id });
@@ -417,6 +422,10 @@ app.post('/trade', async (req, res) => {
       await sendTelegram(`🟥✖️ ${acctEmoji} [${label}] Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
       return res.status(r.status).json({ error: reason });
     }
+    try {
+      db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status) VALUES (?,?,?,?,?,?,?,?,?,?,'bracket','pending') ON CONFLICT(alpaca_order_id) DO NOTHING`)
+        .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr());
+    } catch(e) { console.error('DB pending save error:', e.message); }
     console.log(`[${label}] Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
     await sendTelegram(`${acctEmoji} [${label}] Order placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nTP $${tp} · SL $${sl} ${acctEmoji}`);
     res.json({ ok: true, order: d });
@@ -814,9 +823,14 @@ async function pollAccount(key, secret, label) {
             slPrice = meta.stopLossPrice ? parseFloat(meta.stopLossPrice) : null;
           }
           db.prepare(`
-            INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(alpaca_order_id) DO NOTHING
+            INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,'filled')
+            ON CONFLICT(alpaca_order_id) DO UPDATE SET
+              status='filled',
+              entry_price=excluded.entry_price,
+              shares=excluded.shares,
+              dollar_amount=excluded.dollar_amount,
+              entry_time_et=excluded.entry_time_et
           `).run(
             order.id, order.symbol, direction, label.toLowerCase(),
             entryPrice, shares, entryPrice * shares,
@@ -888,11 +902,39 @@ async function sendDailySummary() {
   } catch (e) { console.error('Daily summary error:', e.message); }
 }
 
+async function syncPendingOrderStatuses() {
+  const accounts = [
+    { key: process.env.ALPACA_KEY, secret: process.env.ALPACA_SECRET, label: 'bull' },
+    { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'bear' },
+  ];
+  const pending = db.prepare(`SELECT alpaca_order_id, account FROM trades WHERE status='pending' AND date(created_at)=?`).all(dateET());
+  for (const trade of pending) {
+    const acct = accounts.find(a => a.label === trade.account);
+    if (!acct?.key) continue;
+    try {
+      const r = await fetch(`${ALPACA_BASE}/orders/${trade.alpaca_order_id}`, {
+        headers: { 'APCA-API-KEY-ID': acct.key, 'APCA-API-SECRET-KEY': acct.secret }
+      });
+      if (!r.ok) continue;
+      const order = await r.json();
+      let newStatus = null;
+      if (order.status === 'cancelled') newStatus = 'cancelled';
+      else if (order.status === 'expired' || order.status === 'done_for_day') newStatus = 'expired';
+      else if (order.status === 'filled') newStatus = 'filled';
+      if (newStatus) {
+        db.prepare(`UPDATE trades SET status=? WHERE alpaca_order_id=?`).run(newStatus, trade.alpaca_order_id);
+        console.log(`Status sync: ${trade.alpaca_order_id} → ${newStatus}`);
+      }
+    } catch(e) { console.error('Status sync error:', e.message); }
+  }
+}
+
 setInterval(() => {
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10);
   if (now.getUTCHours() === 21 && now.getUTCMinutes() === 0 && lastSummaryDate !== dateStr) {
     lastSummaryDate = dateStr;
+    syncPendingOrderStatuses();
     sendDailySummary();
   }
 }, 60_000);
