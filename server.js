@@ -201,6 +201,61 @@ app.post('/db/chatroom-results', (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── DB: backfill trades from Alpaca for a given date ──────────────────────────
+app.post('/db/backfill', async (req, res) => {
+  try {
+    const date = req.body?.date || dateET();
+    const after  = new Date(`${date}T00:00:00-05:00`).toISOString();
+    const until  = new Date(`${date}T23:59:59-05:00`).toISOString();
+    const accounts = [
+      { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'bull', entrySide: 'buy'  },
+      { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'bear', entrySide: 'sell' },
+    ].filter(a => a.key && a.secret);
+
+    let inserted = 0, skipped = 0;
+    for (const acct of accounts) {
+      const r = await fetch(
+        `${ALPACA_BASE}/orders?status=filled&limit=200&after=${after}&until=${until}&nested=true`,
+        { headers: { 'APCA-API-KEY-ID': acct.key, 'APCA-API-SECRET-KEY': acct.secret } }
+      );
+      if (!r.ok) { console.error(`Backfill fetch error [${acct.label}]:`, r.status); continue; }
+      const orders = await r.json();
+
+      for (const order of orders) {
+        // Only save entry orders (buys for bull, sells for bear)
+        if (order.side !== acct.entrySide) continue;
+        // Skip if it's a leg of a bracket (legs don't appear at top level with nested=true, but guard anyway)
+        if (order.order_class === 'simple' && order.legs?.length) continue;
+
+        const direction  = acct.label === 'bull' ? 'bull' : 'bear';
+        const entryPrice = parseFloat(order.filled_avg_price || 0);
+        const shares     = parseFloat(order.filled_qty || order.qty || 0);
+        const entryTimeET = order.filled_at
+          ? new Date(order.filled_at).toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false })
+          : date;
+        const orderMode = order.order_class === 'bracket' ? 'bracket' : 'multi';
+        let t1Price = null, slPrice = null;
+        if (order.order_class === 'bracket') {
+          const legs = order.legs || [];
+          const tpLeg = legs.find(l => l.type === 'limit');
+          const slLeg = legs.find(l => l.type === 'stop_limit' || l.type === 'stop');
+          t1Price = tpLeg ? parseFloat(tpLeg.limit_price) : null;
+          slPrice = slLeg ? parseFloat(slLeg.stop_price)  : null;
+        }
+
+        const changes = db.prepare(`
+          INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,'filled')
+          ON CONFLICT(alpaca_order_id) DO NOTHING
+        `).run(order.id, order.symbol, direction, acct.label, entryPrice, shares, entryPrice * shares, t1Price, slPrice, entryTimeET, orderMode);
+
+        changes.changes > 0 ? inserted++ : skipped++;
+      }
+    }
+    res.json({ ok: true, date, inserted, skipped });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── DB: get trades for date ────────────────────────────────────────────────────
 app.get('/db/trades', (req, res) => {
   try {
