@@ -610,7 +610,7 @@ function buildTradeMessage(order, label) {
   const side   = (order.side || '').toUpperCase();
   const qty    = order.filled_qty || order.qty || '?';
   const price  = parseFloat(order.filled_avg_price || 0).toFixed(2);
-  const time   = order.filled_at ? new Date(order.filled_at).toLocaleString() : new Date().toLocaleString();
+  const time   = order.filled_at ? new Date(order.filled_at).toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false }) : nowETStr();
   const type   = classifyOrder(order);
   const emoji  = label === 'BULL' ? '✅' : '🟦';
   return `${emoji} [${label}] ${symbol} filled - ${side} ${qty} shares @ $${price}\nType: ${type}\nTime: ${time} ${emoji}`;
