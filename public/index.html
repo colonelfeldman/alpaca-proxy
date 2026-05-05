@@ -1112,9 +1112,29 @@ function renderSummary(s) {
 function renderComparison(cdata) {
   const our   = cdata.ourTrades   || [];
   const their = cdata.theirResults || [];
-  const wrap  = document.getElementById('comp-table-wrap');
-  if (!their.length) { wrap.innerHTML = '<div class="empty" style="padding:1rem 0;">No chatroom results for this date</div>'; return; }
 
+  // Always render the trade list regardless of chatroom results
+  document.getElementById('sum-trade-list').innerHTML = our.length
+    ? our.map(t => {
+        const pnl = t.total_pnl || 0;
+        const statusColor = { filled:'var(--green)', pending:'var(--amber)', expired:'var(--muted)', cancelled:'var(--red)' }[t.status] || 'var(--muted)';
+        return `<div class="trade-list-row">
+          <span class="tl-sym">${t.symbol}</span>
+          <span class="badge ${t.direction==='bull'?'badge-bull':'badge-bear'}" style="font-size:10px;">${t.direction}</span>
+          <span style="font-size:10px;color:${statusColor};font-family:var(--mono);">${t.status||'—'}</span>
+          ${t.total_pnl != null ? `<span class="badge ${pnl>=0?'badge-win':'badge-loss'}" style="font-size:10px;">${pnl>=0?'Win':'Loss'}</span>` : ''}
+          <div class="tl-meta">Entry ${t.entry_price?fmt(t.entry_price):'—'} · ${t.entry_time_et||''} · ${t.order_mode||''}</div>
+          <div class="tl-pnl" style="color:${pnl>=0?'var(--green)':'var(--red)'};">${t.total_pnl != null ? sign(pnl)+fmt(pnl) : '—'}</div>
+        </div>`;
+      }).join('')
+    : '<div class="empty" style="padding:1rem 0;">No DB trades found — trades are saved automatically when orders fill</div>';
+
+  // Chatroom comparison table (independent of trade list)
+  const wrap = document.getElementById('comp-table-wrap');
+  if (!their.length) {
+    wrap.innerHTML = '<div class="empty" style="padding:1rem 0;">No chatroom results for this date</div>';
+    return;
+  }
   const rows = their.map(t => {
     const match = our.find(o => o.symbol === t.symbol);
     return `<tr>
@@ -1128,25 +1148,10 @@ function renderComparison(cdata) {
       <td style="color:${(t.gain_pct||0)>=0?'var(--green)':'var(--red)'};">${t.gain_pct != null ? fmtPct(t.gain_pct) : '—'}</td>
     </tr>`;
   }).join('');
-
   wrap.innerHTML = `<div style="overflow-x:auto;"><table class="comp-table">
     <thead><tr><th>Symbol</th><th>Dir</th><th>Our Entry</th><th>Their Entry</th><th>Our P&L</th><th>Their Exit</th><th>Our %</th><th>Their %</th></tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
-
-  // Trade list
-  document.getElementById('sum-trade-list').innerHTML = our.length
-    ? our.map(t => {
-        const pnl = t.total_pnl || 0;
-        return `<div class="trade-list-row">
-          <span class="tl-sym">${t.symbol}</span>
-          <span class="badge ${t.direction==='bull'?'badge-bull':'badge-bear'}" style="font-size:10px;">${t.direction}</span>
-          <span class="badge ${pnl>=0?'badge-win':'badge-loss'}" style="font-size:10px;">${pnl>=0?'Win':'Loss'}</span>
-          <div class="tl-meta">Entry ${t.entry_price?fmt(t.entry_price):'—'} · ${t.entry_time_et||''}</div>
-          <div class="tl-pnl" style="color:${pnl>=0?'var(--green)':'var(--red)'};">${sign(pnl)}${fmt(pnl)}</div>
-        </div>`;
-      }).join('')
-    : '<div class="empty" style="padding:1rem 0;">No DB trades found — trades are saved automatically when orders fill</div>';
 }
 
 async function uploadResultsImage(input) {
