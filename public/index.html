@@ -623,6 +623,7 @@ function showTab(t) {
     document.getElementById('tab-'+id).classList.toggle('active', id === t);
   });
   activeTab = t;
+  localStorage.setItem('activeTab', t);
   if (t === 'dashboard') refreshDashboard();
   if (t === 'summary')   loadSummary();
   if (t === 'orders')    refreshOrders();
@@ -1057,6 +1058,7 @@ function setSumDate(range, btn) {
   } else if (range === 'custom') {
     sumDate = document.getElementById('sum-custom-date').value || now;
   }
+  localStorage.setItem('sumDate', sumDate);
   loadSummary();
 }
 
@@ -1384,10 +1386,16 @@ async function cancelAllOrders() {
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 document.getElementById('dash-date').value = todayET();
-document.getElementById('sum-custom-date').value = todayET();
+const savedSumDate = localStorage.getItem('sumDate');
+if (savedSumDate) {
+  sumDate = savedSumDate;
+  document.getElementById('sum-custom-date').value = savedSumDate;
+} else {
+  document.getElementById('sum-custom-date').value = todayET();
+}
 loadMetrics();
 setInterval(loadMetrics, 60000);
-showTab('dashboard');
+showTab(localStorage.getItem('activeTab') || 'dashboard');
 </script>
 </body>
 </html>
