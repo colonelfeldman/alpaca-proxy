@@ -920,24 +920,46 @@ function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
 }
 
 function buildPriceBar({ sl, entry, targets, current, isBull, trailPct }) {
-  const prices = [sl, entry, ...targets, current].filter(p => p && p > 0 && isFinite(p));
-  if (prices.length < 2) return '';
-  const min = Math.min(...prices) * 0.998;
-  const max = Math.max(...prices) * 1.002;
-  const pct = p => ((p - min) / (max - min) * 96 + 2).toFixed(1);
+  const validTargets = targets.filter(p => p && p > 0 && isFinite(p));
+  if (!entry || entry <= 0) return '';
+
+  // Fixed visual positions — SL far left, entry at 25%, targets spread right
+  const SL_PCT   = 5;
+  const ENTRY_PCT = 25;
+  const targetSlots = validTargets.length + (trailPct ? 1 : 0);
+  const tStart = 52, tEnd = 92;
+  const tStep  = targetSlots > 1 ? (tEnd - tStart) / (targetSlots - 1) : 0;
+  const tPos   = i => targetSlots === 1 ? (tStart + tEnd) / 2 : tStart + i * tStep;
+
+  // Current price mapped proportionally between entry and the farthest target
+  let currentPct = null;
+  if (current && validTargets.length > 0) {
+    const farT  = isBull ? Math.max(...validTargets) : Math.min(...validTargets);
+    const range = Math.abs(farT - entry);
+    const moved = isBull ? (current - entry) : (entry - current);
+    const farPos = tPos(validTargets.length - 1);
+    if (range > 0) currentPct = Math.max(2, Math.min(97, ENTRY_PCT + (moved / range) * (farPos - ENTRY_PCT)));
+  }
+
+  // Green/red fill from entry toward current price
+  let fill = '';
+  if (currentPct !== null) {
+    const inProfit = isBull ? current >= entry : current <= entry;
+    const left  = Math.min(ENTRY_PCT, currentPct);
+    const width = Math.abs(currentPct - ENTRY_PCT);
+    fill = `<div style="position:absolute;left:${left}%;width:${width}%;top:0;bottom:0;border-radius:2px;background:${inProfit ? 'rgba(74,222,128,0.35)' : 'rgba(248,113,113,0.25)'};pointer-events:none;"></div>`;
+  }
 
   let markers = '';
-  if (sl) markers += `<div class="pb-marker sl" style="left:${pct(sl)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">SL ${fmt(sl)}</div></div>`;
-  if (entry) markers += `<div class="pb-marker entry" style="left:${pct(entry)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">Entry ${fmt(entry)}</div></div>`;
-  targets.forEach((t, i) => {
-    if (!t) return;
-    const op = i === 0 ? '1' : i === 1 ? '.75' : '.55';
-    markers += `<div class="pb-marker target" style="left:${pct(t)}%;opacity:${op}"><div class="pb-marker-dot"></div><div class="pb-marker-label">T${i+1} ${fmt(t)}</div></div>`;
+  if (sl) markers += `<div class="pb-marker sl" style="left:${SL_PCT}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">SL ${fmt(sl)}</div></div>`;
+  markers += `<div class="pb-marker entry" style="left:${ENTRY_PCT}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">Entry ${fmt(entry)}</div></div>`;
+  validTargets.forEach((t, i) => {
+    markers += `<div class="pb-marker target" style="left:${tPos(i).toFixed(1)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">T${i+1} ${fmt(t)}</div></div>`;
   });
-  if (trailPct) markers += `<div class="pb-marker target" style="left:95%;opacity:.45"><div class="pb-marker-dot" style="background:var(--amber);"></div><div class="pb-marker-label">Trail ${trailPct}%</div></div>`;
-  if (current) markers += `<div class="pb-marker current" style="left:${pct(current)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">${fmt(current)}</div></div>`;
+  if (trailPct) markers += `<div class="pb-marker target" style="left:${tPos(validTargets.length).toFixed(1)}%;opacity:.6"><div class="pb-marker-dot" style="background:var(--amber);"></div><div class="pb-marker-label">Trail ${trailPct}%</div></div>`;
+  if (currentPct !== null) markers += `<div class="pb-marker current" style="left:${currentPct.toFixed(1)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">${fmt(current)}</div></div>`;
 
-  return `<div class="price-bar-wrap"><div class="price-bar-track">${markers}</div></div>`;
+  return `<div class="price-bar-wrap"><div class="price-bar-track">${fill}${markers}</div></div>`;
 }
 
 function buildLegs({ t1, t2, trailPct, entry, qty, isBull, tpLeg, slLeg }) {
