@@ -243,11 +243,15 @@ app.post('/db/backfill', async (req, res) => {
           slPrice = slLeg ? parseFloat(slLeg.stop_price)  : null;
         }
 
+        const createdAt = order.filled_at
+          ? new Date(order.filled_at).toISOString().replace('T', ' ').slice(0, 19)
+          : `${date}T15:00:00`;
+
         const changes = db.prepare(`
-          INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,'filled')
-          ON CONFLICT(alpaca_order_id) DO NOTHING
-        `).run(order.id, order.symbol, direction, acct.label, entryPrice, shares, entryPrice * shares, t1Price, slPrice, entryTimeET, orderMode);
+          INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,created_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,'filled',?)
+          ON CONFLICT(alpaca_order_id) DO UPDATE SET created_at=excluded.created_at, entry_time_et=excluded.entry_time_et, status='filled'
+        `).run(order.id, order.symbol, direction, acct.label, entryPrice, shares, entryPrice * shares, t1Price, slPrice, entryTimeET, orderMode, createdAt);
 
         changes.changes > 0 ? inserted++ : skipped++;
       }
