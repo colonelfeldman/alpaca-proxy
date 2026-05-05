@@ -1047,6 +1047,12 @@ async function submitLimitClose(symbol, acct, key) {
   if (!price || isNaN(price)) { alert('Enter a valid limit price'); return; }
   const side = data.isLong ? 'sell' : 'buy';
   try {
+    // Cancel all open orders for this symbol first so shares are freed up
+    const openR = await fetch('/alpaca-'+acct+'/orders?status=open&symbols='+symbol);
+    if (openR.ok) {
+      const openOrders = await openR.json();
+      await Promise.all(openOrders.map(o => fetch('/alpaca-'+acct+'/orders/'+o.id, { method: 'DELETE' })));
+    }
     const r = await fetch('/alpaca-'+acct+'/orders', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ symbol, qty: String(data.qty), side, type:'limit', limit_price:String(price), time_in_force:'day' })
