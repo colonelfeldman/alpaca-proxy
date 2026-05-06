@@ -62,6 +62,15 @@ db.exec(`
 try { db.exec(`ALTER TABLE trades ADD COLUMN sl_order_id TEXT`); } catch(e) {}
 try { db.exec(`ALTER TABLE trades ADD COLUMN trail_order_id TEXT`); } catch(e) {}
 try { db.exec(`ALTER TABLE trades ADD COLUMN status TEXT DEFAULT 'pending'`); } catch(e) {}
+try { db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`); } catch(e) {}
+
+function getSetting(key, defaultVal) {
+  const row = db.prepare('SELECT value FROM settings WHERE key=?').get(key);
+  return row ? JSON.parse(row.value) : defaultVal;
+}
+function setSetting(key, value) {
+  db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(value));
+}
 
 function dateET(d) {
   return new Date(d || Date.now()).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
@@ -988,6 +997,57 @@ async function syncPendingOrderStatuses() {
   }
 }
 
+// ── Close all positions ────────────────────────────────────────────────────────
+
+async function closeAllPositions(triggeredBy = 'manual') {
+  const accounts = [
+    { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL' },
+    { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR' },
+  ].filter(a => a.key && a.secret);
+
+  let closed = 0, errors = [];
+  for (const acct of accounts) {
+    const headers = { 'APCA-API-KEY-ID': acct.key, 'APCA-API-SECRET-KEY': acct.secret, 'Content-Type': 'application/json' };
+    try {
+      // Cancel all open orders first
+      await fetch(`${ALPACA_BASE}/orders`, { method: 'DELETE', headers });
+      // Close all positions at market
+      const r = await fetch(`${ALPACA_BASE}/positions`, { method: 'DELETE', headers });
+      if (r.ok) {
+        const result = await r.json();
+        closed += Array.isArray(result) ? result.length : 0;
+      }
+    } catch(e) { errors.push(`[${acct.label}] ${e.message}`); }
+  }
+  const tag = triggeredBy === 'auto' ? '⏰ Auto-close' : '🔴 Manual close-all';
+  const msg = errors.length
+    ? `${tag}: ${closed} position(s) closed. Errors: ${errors.join(', ')}`
+    : `${tag}: ${closed} position(s) closed at market`;
+  await sendTelegram(msg).catch(e => console.error('Telegram error:', e.message));
+  console.log(msg);
+  return { closed, errors };
+}
+
+app.post('/close-all', async (req, res) => {
+  try {
+    const result = await closeAllPositions('manual');
+    res.json({ ok: true, ...result });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/settings/auto-close', (req, res) => {
+  res.json({ enabled: getSetting('autoCloseEnabled', false), time: getSetting('autoCloseTime', '15:50') });
+});
+
+app.post('/settings/auto-close', (req, res) => {
+  const { enabled, time } = req.body;
+  if (enabled !== undefined) setSetting('autoCloseEnabled', !!enabled);
+  if (time) setSetting('autoCloseTime', time);
+  res.json({ ok: true, enabled: getSetting('autoCloseEnabled', false), time: getSetting('autoCloseTime', '15:50') });
+});
+
+let lastAutoCloseDate = null;
+
 setInterval(() => {
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10);
@@ -995,6 +1055,17 @@ setInterval(() => {
     lastSummaryDate = dateStr;
     syncPendingOrderStatuses();
     sendDailySummary();
+  }
+  // Auto-close check
+  if (getSetting('autoCloseEnabled', false) && lastAutoCloseDate !== dateStr) {
+    const closeTime = getSetting('autoCloseTime', '15:50');
+    const [h, m] = closeTime.split(':').map(Number);
+    const etNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const isWeekday = etNow.getDay() >= 1 && etNow.getDay() <= 5;
+    if (isWeekday && etNow.getHours() === h && etNow.getMinutes() === m) {
+      lastAutoCloseDate = dateStr;
+      closeAllPositions('auto');
+    }
   }
 }, 60_000);
 
