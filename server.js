@@ -454,8 +454,9 @@ app.post('/trade', async (req, res) => {
         await sendTelegram(`🟥✖️ ${acctEmoji} [${label}] Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
         return res.status(r.status).json({ error: reason });
       }
-      const t2 = targets.length > 1 ? targets[1] : Math.round(tp * (isBull ? 1.005 : 0.995) * 100) / 100;
-      const trail = parseFloat(trailPct) || 1.5;
+      // 1 target → all shares at T1. 2 targets → 50/50 split. 3+ → 1/3 each with trailing stop.
+      const t2 = targets.length >= 2 ? targets[1] : null;
+      const trail = targets.length >= 3 ? (parseFloat(trailPct) || 1.5) : null;
       orderMetadata[d.id] = {
         mode: 'multi', symbol: symbol.toUpperCase(), isBull, label,
         target1: tp, target2: t2, trailPct: trail, stopLossPrice: sl,
@@ -466,8 +467,9 @@ app.post('/trade', async (req, res) => {
         db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status) VALUES (?,?,?,?,?,?,?,?,?,?,'multi','pending') ON CONFLICT(alpaca_order_id) DO NOTHING`)
           .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr());
       } catch(e) { console.error('DB pending save error:', e.message); }
+      const modeDesc = !t2 ? `All ${qty}sh → T1 $${tp}` : !trail ? `50/50: T1 $${tp} · T2 $${t2}` : `1/3 each: T1 $${tp} · T2 $${t2} · Trail ${trail}%`;
       console.log(`[${label}] Multi-target trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
-      await sendTelegram(`${acctEmoji} [${label}] Multi-target placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nT1 $${tp}${t2 ? ` · T2 $${t2}` : ''} · Trail ${trail}% · SL $${sl} ${acctEmoji}`);
+      await sendTelegram(`${acctEmoji} [${label}] Multi-target placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\n${modeDesc} · SL $${sl} ${acctEmoji}`);
       return res.json({ ok: true, order: d, orderId: d.id });
     }
 
@@ -705,16 +707,35 @@ async function sendTradeNotification(order, label) {
 
 async function placeMultiTargetExits(entryOrder, meta, key, secret) {
   const { symbol, target1, target2, trailPct, stopLossPrice, isBull, label } = meta;
-  const qty    = parseInt(entryOrder.filled_qty || entryOrder.qty || meta.qty);
-  const share1 = Math.floor(qty / 3);
-  const share2 = Math.floor(qty / 3);
-  const share3 = qty - share1 - share2;
-  const side   = isBull ? 'sell' : 'buy';
+  const qty  = parseInt(entryOrder.filled_qty || entryOrder.qty || meta.qty);
+  const side = isBull ? 'sell' : 'buy';
   const headers = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret, 'Content-Type': 'application/json' };
   const placed = { t1OrderId: null, t2OrderId: null, trailOrderId: null, slOrderId: null };
 
   try {
-    if (target2) {
+    if (!target2) {
+      // 1 target: all shares exit at T1, SL covers all
+      const [t1Res, slRes] = await Promise.all([
+        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'limit', limit_price:String(target1), time_in_force:'day' }) }),
+        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'stop', stop_price:String(stopLossPrice), time_in_force:'day' }) })
+      ]);
+      const [t1d, sld] = await Promise.all([t1Res.json(), slRes.json()]);
+      placed.t1OrderId = t1d.id; placed.slOrderId = sld.id;
+      await sendTelegram(`📐 [${label}] Exits for ${symbol}:\nAll (${qty}sh) limit @ $${target1}\nSL ${qty}sh @ $${stopLossPrice}`);
+    } else if (!trailPct) {
+      // 2 targets: 50/50 split, no trailing stop
+      const half1 = Math.floor(qty / 2), half2 = qty - half1;
+      const [t1Res, t2Res, slRes] = await Promise.all([
+        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(half1), side, type:'limit', limit_price:String(target1), time_in_force:'day' }) }),
+        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(half2), side, type:'limit', limit_price:String(target2), time_in_force:'day' }) }),
+        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'stop', stop_price:String(stopLossPrice), time_in_force:'day' }) })
+      ]);
+      const [t1d, t2d, sld] = await Promise.all([t1Res.json(), t2Res.json(), slRes.json()]);
+      placed.t1OrderId = t1d.id; placed.t2OrderId = t2d.id; placed.slOrderId = sld.id;
+      await sendTelegram(`📐 [${label}] Exits for ${symbol}:\n1/2 (${half1}sh) limit @ $${target1}\n1/2 (${half2}sh) limit @ $${target2}\nSL ${qty}sh @ $${stopLossPrice}`);
+    } else {
+      // 3+ targets: 1/3 each with trailing stop (T3)
+      const share1 = Math.floor(qty / 3), share2 = Math.floor(qty / 3), share3 = qty - share1 - share2;
       const [t1Res, t2Res, trailRes, slRes] = await Promise.all([
         fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(share1), side, type:'limit', limit_price:String(target1), time_in_force:'day' }) }),
         fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(share2), side, type:'limit', limit_price:String(target2), time_in_force:'day' }) }),
@@ -724,17 +745,7 @@ async function placeMultiTargetExits(entryOrder, meta, key, secret) {
       const [t1d, t2d, trld, sld] = await Promise.all([t1Res.json(), t2Res.json(), trailRes.json(), slRes.json()]);
       placed.t1OrderId = t1d.id; placed.t2OrderId = t2d.id;
       placed.trailOrderId = trld.id; placed.slOrderId = sld.id;
-      await sendTelegram(`📐 [${label}] Multi exits for ${symbol}:\n1/3 (${share1}sh) limit @ $${target1}\n1/3 (${share2}sh) limit @ $${target2}\n1/3 (${share3}sh) trail ${trailPct}%\nSL ${qty}sh @ $${stopLossPrice}`);
-    } else {
-      const twoThirds = share1 + share2;
-      const [t1Res, trailRes, slRes] = await Promise.all([
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(twoThirds), side, type:'limit', limit_price:String(target1), time_in_force:'day' }) }),
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(share3), side, type:'trailing_stop', trail_percent:String(trailPct), time_in_force:'day' }) }),
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'stop', stop_price:String(stopLossPrice), time_in_force:'day' }) })
-      ]);
-      const [t1d, trld, sld] = await Promise.all([t1Res.json(), trailRes.json(), slRes.json()]);
-      placed.t1OrderId = t1d.id; placed.trailOrderId = trld.id; placed.slOrderId = sld.id;
-      await sendTelegram(`📐 [${label}] Multi exits for ${symbol}:\n2/3 (${twoThirds}sh) limit @ $${target1}\n1/3 (${share3}sh) trail ${trailPct}%\nSL ${qty}sh @ $${stopLossPrice}`);
+      await sendTelegram(`📐 [${label}] Exits for ${symbol}:\n1/3 (${share1}sh) limit @ $${target1}\n1/3 (${share2}sh) limit @ $${target2}\n1/3 (${share3}sh) trail ${trailPct}%\nSL ${qty}sh @ $${stopLossPrice}`);
     }
     meta.exitOrderIds = placed;
     meta.status = 'exits_placed';
