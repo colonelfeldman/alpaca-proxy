@@ -451,7 +451,7 @@ app.post('/trade', async (req, res) => {
       if (!r.ok) {
         const reason = d.message || JSON.stringify(d);
         console.error(`[${label}] Trade rejected: ${side} ${symbol} — ${reason}`);
-        await sendTelegram(`🟥✖️ ${acctEmoji} [${label}] Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
+        await sendTelegram(`❌ ${label} | ${symbol} — Order rejected\n${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
         return res.status(r.status).json({ error: reason });
       }
       // 1 target → all shares at T1. 2 targets → 50/50 split. 3+ → 1/3 each with trailing stop.
@@ -467,9 +467,13 @@ app.post('/trade', async (req, res) => {
         db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status) VALUES (?,?,?,?,?,?,?,?,?,?,'multi','pending') ON CONFLICT(alpaca_order_id) DO NOTHING`)
           .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr());
       } catch(e) { console.error('DB pending save error:', e.message); }
-      const modeDesc = !t2 ? `All ${qty}sh → T1 $${tp}` : !trail ? `50/50: T1 $${tp} · T2 $${t2}` : `1/3 each: T1 $${tp} · T2 $${t2} · Trail ${trail}%`;
+      const modeDesc = !t2
+        ? `All ${qty} sh → $${tp}`
+        : !trail
+          ? `½ ${Math.floor(qty/2)} sh → $${tp}  ·  ½ ${qty - Math.floor(qty/2)} sh → $${t2}`
+          : `⅓ ${Math.floor(qty/3)} sh → $${tp}  ·  ⅓ ${Math.floor(qty/3)} sh → $${t2}  ·  ⅓ Trail ${trail}%`;
       console.log(`[${label}] Multi-target trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
-      await sendTelegram(`${acctEmoji} [${label}] Multi-target placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\n${modeDesc} · SL $${sl} ${acctEmoji}`);
+      await sendTelegram(`🟢 ${label} | ${symbol} — Multi-target placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\n${modeDesc}\nSL: $${sl}`);
       return res.json({ ok: true, order: d, orderId: d.id });
     }
 
@@ -489,7 +493,7 @@ app.post('/trade', async (req, res) => {
     if (!r.ok) {
       const reason = d.message || JSON.stringify(d);
       console.error(`[${label}] Trade rejected: ${side} ${symbol} — ${reason}`);
-      await sendTelegram(`🟥✖️ ${acctEmoji} [${label}] Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
+      await sendTelegram(`❌ ${label} | ${symbol} — Order rejected\n${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
       return res.status(r.status).json({ error: reason });
     }
     try {
@@ -497,7 +501,7 @@ app.post('/trade', async (req, res) => {
         .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr());
     } catch(e) { console.error('DB pending save error:', e.message); }
     console.log(`[${label}] Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
-    await sendTelegram(`${acctEmoji} [${label}] Order placed: ${symbol} ${side.toUpperCase()} ${qty} sh @ $${trigger}\nTP $${tp} · SL $${sl} ${acctEmoji}`);
+    await sendTelegram(`🟢 ${label} | ${symbol} — Bracket placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\nTP: $${tp}  ·  SL: $${sl}`);
     res.json({ ok: true, order: d });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -675,15 +679,50 @@ function classifyOrder(order) {
   return 'entry';
 }
 
-function buildTradeMessage(order, label) {
+function buildTradeMessage(order, label, ctx = {}) {
   const symbol = order.symbol || '?';
   const side   = (order.side || '').toUpperCase();
-  const qty    = order.filled_qty || order.qty || '?';
-  const price  = parseFloat(order.filled_avg_price || 0).toFixed(2);
-  const time   = order.filled_at ? new Date(order.filled_at).toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false }) : nowETStr();
-  const type   = classifyOrder(order);
-  const emoji  = label === 'BULL' ? '✅' : '🟦';
-  return `${emoji} [${label}] ${symbol} filled - ${side} ${qty} shares @ $${price}\nType: ${type}\nTime: ${time} ${emoji}`;
+  const qty    = parseFloat(order.filled_qty || order.qty || 0);
+  const price  = parseFloat(order.filled_avg_price || 0);
+  const $ = n => '$' + parseFloat(n).toFixed(2);
+  const timeET = order.filled_at
+    ? new Date(order.filled_at).toLocaleString('en-US', { timeZone: 'America/New_York', hour12: true, hour: 'numeric', minute: '2-digit', second: '2-digit' })
+    : nowETStr();
+  const { entryMeta, entryPrice, isT1, isT2, isTrail, isSL } = ctx;
+  const isExit = isT1 || isT2 || isTrail || isSL;
+  const isBull = label === 'BULL';
+
+  if (!isExit) {
+    // Entry fill
+    const lines = [`✅ ${label} | ${symbol} — Entry filled`];
+    lines.push(`${side} ${qty} sh @ ${$(price)}${price && qty ? ` · ${$(price * qty)} invested` : ''}`);
+    if (entryMeta) {
+      const parts = [
+        entryMeta.target1    && `T1 ${$(entryMeta.target1)}`,
+        entryMeta.target2    && `T2 ${$(entryMeta.target2)}`,
+        entryMeta.trailPct   && `Trail ${entryMeta.trailPct}%`,
+        entryMeta.stopLossPrice && `SL ${$(entryMeta.stopLossPrice)}`,
+      ].filter(Boolean);
+      if (parts.length) lines.push(parts.join(' · '));
+    }
+    lines.push(timeET);
+    return lines.join('\n');
+  }
+
+  // Exit fill
+  const legEmoji = isSL ? '🛑' : isT2 ? '🎯🎯' : isTrail ? '🔄' : '🎯';
+  const legLabel = isSL ? 'Stop loss hit' : isT2 ? 'T2 hit' : isTrail ? 'Trailing stop' : 'T1 hit';
+  const pnl = entryPrice && price && qty
+    ? (isBull ? price - entryPrice : entryPrice - price) * qty : null;
+  const pct = pnl != null && entryPrice ? (pnl / (entryPrice * qty)) * 100 : null;
+  const sgn = n => n >= 0 ? '+' : '';
+
+  const lines = [`${legEmoji} ${label} | ${symbol} — ${legLabel}`];
+  lines.push(`${side} ${qty} sh @ ${$(price)}${entryPrice ? ` · Entry ${$(entryPrice)}` : ''}`);
+  if (pnl != null) lines.push(`P&L: ${sgn(pnl)}${$(Math.abs(pnl))} (${sgn(pct)}${pct.toFixed(2)}%)`);
+  if (isT2) lines.push(`SL cancelled · Trailing stop protecting final position`);
+  lines.push(timeET);
+  return lines.join('\n');
 }
 
 async function sendTelegram(text) {
@@ -698,8 +737,8 @@ async function sendTelegram(text) {
   }
 }
 
-async function sendTradeNotification(order, label) {
-  try { await sendTelegram(buildTradeMessage(order, label)); }
+async function sendTradeNotification(order, label, ctx = {}) {
+  try { await sendTelegram(buildTradeMessage(order, label, ctx)); }
   catch (e) { console.error('Telegram error:', e.message); }
 }
 
@@ -721,7 +760,7 @@ async function placeMultiTargetExits(entryOrder, meta, key, secret) {
       ]);
       const [t1d, sld] = await Promise.all([t1Res.json(), slRes.json()]);
       placed.t1OrderId = t1d.id; placed.slOrderId = sld.id;
-      await sendTelegram(`📐 [${label}] Exits for ${symbol}:\nAll (${qty}sh) limit @ $${target1}\nSL ${qty}sh @ $${stopLossPrice}`);
+      await sendTelegram(`📐 ${label} | ${symbol} — Exits armed\nAll ${qty} sh → limit $${target1}\nSL: $${stopLossPrice}`);
     } else if (!trailPct) {
       // 2 targets: 50/50 split, no trailing stop
       const half1 = Math.floor(qty / 2), half2 = qty - half1;
@@ -732,7 +771,7 @@ async function placeMultiTargetExits(entryOrder, meta, key, secret) {
       ]);
       const [t1d, t2d, sld] = await Promise.all([t1Res.json(), t2Res.json(), slRes.json()]);
       placed.t1OrderId = t1d.id; placed.t2OrderId = t2d.id; placed.slOrderId = sld.id;
-      await sendTelegram(`📐 [${label}] Exits for ${symbol}:\n1/2 (${half1}sh) limit @ $${target1}\n1/2 (${half2}sh) limit @ $${target2}\nSL ${qty}sh @ $${stopLossPrice}`);
+      await sendTelegram(`📐 ${label} | ${symbol} — Exits armed\n½ ${half1} sh → $${target1}\n½ ${half2} sh → $${target2}\nSL: $${stopLossPrice}`);
     } else {
       // 3+ targets: 1/3 each with trailing stop (T3)
       const share1 = Math.floor(qty / 3), share2 = Math.floor(qty / 3), share3 = qty - share1 - share2;
@@ -745,7 +784,7 @@ async function placeMultiTargetExits(entryOrder, meta, key, secret) {
       const [t1d, t2d, trld, sld] = await Promise.all([t1Res.json(), t2Res.json(), trailRes.json(), slRes.json()]);
       placed.t1OrderId = t1d.id; placed.t2OrderId = t2d.id;
       placed.trailOrderId = trld.id; placed.slOrderId = sld.id;
-      await sendTelegram(`📐 [${label}] Exits for ${symbol}:\n1/3 (${share1}sh) limit @ $${target1}\n1/3 (${share2}sh) limit @ $${target2}\n1/3 (${share3}sh) trail ${trailPct}%\nSL ${qty}sh @ $${stopLossPrice}`);
+      await sendTelegram(`📐 ${label} | ${symbol} — Exits armed\n⅓ ${share1} sh → $${target1}\n⅓ ${share2} sh → $${target2}\n⅓ ${share3} sh → Trail ${trailPct}%\nSL: $${stopLossPrice}`);
     }
     meta.exitOrderIds = placed;
     meta.status = 'exits_placed';
@@ -776,7 +815,6 @@ async function handleTarget2Fill(entryId, meta, key, secret) {
   }
   meta.status = 'target2_filled';
   saveOrderMetadata();
-  await sendTelegram(`🎯 [${label}] T2 filled for ${symbol} — stop loss cancelled, trailing stop now protecting final position`).catch(e => console.error('Telegram error:', e.message));
 }
 
 // ── Order metadata persistence ─────────────────────────────────────────────────
@@ -878,15 +916,28 @@ async function pollAccount(key, secret, label) {
         await placeMultiTargetExits(order, meta, key, secret);
       }
 
-      const entryId = exitToEntry[order.id];
-      if (entryId) {
-        const entryMeta = orderMetadata[entryId];
-        if (entryMeta && order.id === entryMeta.exitOrderIds?.t2OrderId && entryMeta.status === 'exits_placed') {
-          await handleTarget2Fill(entryId, entryMeta, key, secret);
-        }
+      const entryId  = exitToEntry[order.id];
+      const exitMeta = entryId ? orderMetadata[entryId] : null;
+      if (exitMeta && order.id === exitMeta.exitOrderIds?.t2OrderId && exitMeta.status === 'exits_placed') {
+        await handleTarget2Fill(entryId, exitMeta, key, secret);
       }
 
-      await sendTradeNotification(order, label);
+      // Look up the original entry fill price so exit notifications can show P&L
+      let entryFillPrice = null;
+      if (entryId) {
+        try {
+          const row = db.prepare('SELECT entry_price FROM trades WHERE alpaca_order_id=?').get(entryId);
+          entryFillPrice = row?.entry_price || null;
+        } catch(e) {}
+      }
+      await sendTradeNotification(order, label, {
+        entryMeta:  meta,       // only populated for entry fills (meta = orderMetadata[order.id])
+        entryPrice: entryFillPrice,
+        isT1:    exitMeta ? order.id === exitMeta.exitOrderIds?.t1OrderId    : false,
+        isT2:    exitMeta ? order.id === exitMeta.exitOrderIds?.t2OrderId    : false,
+        isTrail: exitMeta ? order.id === exitMeta.exitOrderIds?.trailOrderId : false,
+        isSL:    exitMeta ? order.id === exitMeta.exitOrderIds?.slOrderId    : false,
+      });
 
       // Save filled entry orders to trades DB (skip exit legs)
       try {
@@ -1027,9 +1078,13 @@ async function closeAllPositions(triggeredBy = 'manual') {
   ].filter(a => a.key && a.secret);
 
   let closed = 0, errors = [];
+  const acctSymbols = {};
   for (const acct of accounts) {
     const headers = { 'APCA-API-KEY-ID': acct.key, 'APCA-API-SECRET-KEY': acct.secret, 'Content-Type': 'application/json' };
     try {
+      // Fetch positions before closing so we can report symbols and P&L
+      const posRes = await fetch(`${ALPACA_BASE}/positions`, { headers });
+      const positions = posRes.ok ? await posRes.json() : [];
       // Cancel all open orders first
       await fetch(`${ALPACA_BASE}/orders`, { method: 'DELETE', headers });
       // Close all positions at market
@@ -1037,13 +1092,23 @@ async function closeAllPositions(triggeredBy = 'manual') {
       if (r.ok) {
         const result = await r.json();
         closed += Array.isArray(result) ? result.length : 0;
+        if (Array.isArray(positions) && positions.length) {
+          acctSymbols[acct.label] = positions.map(p => {
+            const pl = parseFloat(p.unrealized_pl);
+            const sgn = pl >= 0 ? '+' : '-';
+            return `${p.symbol} (${sgn}$${Math.abs(pl).toFixed(2)})`;
+          });
+        }
       }
     } catch(e) { errors.push(`[${acct.label}] ${e.message}`); }
   }
-  const tag = triggeredBy === 'auto' ? '⏰ Auto-close' : '🔴 Manual close-all';
-  const msg = errors.length
-    ? `${tag}: ${closed} position(s) closed. Errors: ${errors.join(', ')}`
-    : `${tag}: ${closed} position(s) closed at market`;
+  const tag = triggeredBy === 'auto' ? '⏰ Auto-close EOD' : '🔴 Manual close-all';
+  const lines = [`${tag} — ${closed} position(s) closed at market`];
+  for (const [label, syms] of Object.entries(acctSymbols)) {
+    if (syms.length) lines.push(`${label}: ${syms.join(', ')}`);
+  }
+  if (errors.length) lines.push(`Errors: ${errors.join(', ')}`);
+  const msg = lines.join('\n');
   await sendTelegram(msg).catch(e => console.error('Telegram error:', e.message));
   console.log(msg);
   return { closed, errors };
