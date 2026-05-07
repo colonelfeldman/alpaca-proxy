@@ -905,32 +905,84 @@ function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
       ? '<span class="badge badge-win">Win</span>'
       : '<span class="badge badge-loss">Loss</span>';
 
-    // Build leg outcomes for closed bracket cards
+    // Build leg outcomes for closed cards (bracket and multi-target)
     const closedLegsHtml = (() => {
       if (!entryPrice || isCanceled) return '';
-      const allLegs = entryOrd?.legs || [];
-      const filledLegs = allLegs.filter(l => l.status === 'filled');
-      const slHit = filledLegs.some(l => l.type === 'stop_limit' || l.type === 'stop');
       let lHtml = '';
       let totalPnl = 0;
-      if (t1) {
-        const share1 = Math.floor(qty / 3);
-        const t1Leg = allLegs.find(l => l.type === 'limit' && l.status === 'filled');
-        const t1Fill = t1Leg ? parseFloat(t1Leg.filled_avg_price || t1) : null;
-        const t1Pnl = t1Fill ? (isBull ? (t1Fill - entryPrice) * share1 : (entryPrice - t1Fill) * share1) : null;
-        if (t1Pnl != null) totalPnl += t1Pnl;
-        lHtml += `<div class="leg-row"><span class="leg-label">T1</span><span class="leg-price" style="color:${t1Pnl!=null?'var(--green)':'var(--muted)'};">${t1Fill ? fmt(t1Fill) : fmt(t1)}</span><span class="leg-shares">${share1} sh</span><span class="leg-status" style="color:${t1Pnl!=null?'var(--green)':'var(--muted)'};">${t1Pnl!=null?'✓ filled':'✗ not reached'}</span>${t1Pnl!=null?`<span class="leg-pnl" style="color:var(--green);">${sign(t1Pnl)}${fmt(t1Pnl)}</span>`:''}</div>`;
+
+      if (meta?.exitOrderIds) {
+        // Multi-target trade: look up exit orders from the orders list by ID
+        const { t1OrderId, t2OrderId, trailOrderId, slOrderId } = meta.exitOrderIds;
+        const t1Ord    = orders.find(o => o.id === t1OrderId);
+        const t2Ord    = orders.find(o => o.id === t2OrderId);
+        const trailOrd = orders.find(o => o.id === trailOrderId);
+        const slOrd    = orders.find(o => o.id === slOrderId);
+        const hasT2 = !!meta.target2, hasTrail = !!meta.trailPct;
+        const s1 = hasT2 && hasTrail ? Math.floor(qty/3) : (hasT2 ? Math.floor(qty/2) : qty);
+        const s2 = hasT2 && hasTrail ? Math.floor(qty/3) : (hasT2 ? qty - Math.floor(qty/2) : 0);
+        const s3 = hasT2 && hasTrail ? qty - Math.floor(qty/3)*2 : 0;
+
+        const legRow = (label, px, shares, filled, pnl, isLoss) => {
+          const c = filled ? (isLoss ? 'var(--red)' : 'var(--green)') : 'var(--muted)';
+          return `<div class="leg-row"><span class="leg-label">${label}</span><span class="leg-price" style="color:${c};">${px}</span><span class="leg-shares">${shares} sh</span><span class="leg-status" style="color:${c};">${filled ? '✓ filled' : '✗ not filled'}</span>${pnl != null ? `<span class="leg-pnl" style="color:${c};">${sign(pnl)}${fmt(pnl)}</span>` : ''}</div>`;
+        };
+
+        if (meta.target1) {
+          const filled = t1Ord?.status === 'filled';
+          const px = filled ? parseFloat(t1Ord.filled_avg_price || meta.target1) : meta.target1;
+          const pnl = filled ? (isBull ? (px - entryPrice)*s1 : (entryPrice - px)*s1) : null;
+          if (pnl != null) totalPnl += pnl;
+          lHtml += legRow('T1', fmt(px), s1, filled, pnl, false);
+        }
+        if (meta.target2) {
+          const filled = t2Ord?.status === 'filled';
+          const px = filled ? parseFloat(t2Ord.filled_avg_price || meta.target2) : meta.target2;
+          const pnl = filled ? (isBull ? (px - entryPrice)*s2 : (entryPrice - px)*s2) : null;
+          if (pnl != null) totalPnl += pnl;
+          lHtml += legRow('T2', fmt(px), s2, filled, pnl, false);
+        }
+        if (hasTrail && trailOrd) {
+          const filled = trailOrd.status === 'filled';
+          const px = filled ? parseFloat(trailOrd.filled_avg_price || 0) : null;
+          const pnl = px ? (isBull ? (px - entryPrice)*s3 : (entryPrice - px)*s3) : null;
+          if (pnl != null) totalPnl += pnl;
+          const isLoss = pnl != null && pnl < 0;
+          lHtml += legRow('T3', px ? fmt(px) : `Trail ${meta.trailPct}%`, s3, filled, pnl, isLoss);
+        }
+        if (slOrd?.status === 'filled') {
+          const px = parseFloat(slOrd.filled_avg_price || 0);
+          const exitedShares = (t1Ord?.status==='filled' ? s1 : 0) + (t2Ord?.status==='filled' ? s2 : 0) + (trailOrd?.status==='filled' ? s3 : 0);
+          const remainShares = Math.max(0, qty - exitedShares);
+          if (remainShares > 0) {
+            const pnl = (isBull ? (px - entryPrice)*remainShares : (entryPrice - px)*remainShares);
+            totalPnl += pnl;
+            lHtml += legRow('SL', fmt(px), remainShares, true, pnl, true);
+          }
+        }
+      } else {
+        // Bracket trade: legs are embedded in entryOrd
+        const allLegs = entryOrd?.legs || [];
+        const slHit = allLegs.some(l => (l.type==='stop_limit'||l.type==='stop') && l.status==='filled');
+        if (t1) {
+          const t1Leg = allLegs.find(l => l.type==='limit' && l.status==='filled');
+          const t1Fill = t1Leg ? parseFloat(t1Leg.filled_avg_price || t1) : null;
+          const t1Pnl = t1Fill ? (isBull ? (t1Fill-entryPrice)*qty : (entryPrice-t1Fill)*qty) : null;
+          if (t1Pnl != null) totalPnl += t1Pnl;
+          const c = t1Pnl != null ? 'var(--green)' : 'var(--muted)';
+          lHtml += `<div class="leg-row"><span class="leg-label">T1</span><span class="leg-price" style="color:${c};">${t1Fill?fmt(t1Fill):fmt(t1)}</span><span class="leg-shares">${qty} sh</span><span class="leg-status" style="color:${c};">${t1Pnl!=null?'✓ filled':'✗ not reached'}</span>${t1Pnl!=null?`<span class="leg-pnl" style="color:var(--green);">${sign(t1Pnl)}${fmt(t1Pnl)}</span>`:''}</div>`;
+        }
+        if (slHit) {
+          const slLeg = allLegs.find(l => (l.type==='stop_limit'||l.type==='stop') && l.status==='filled');
+          const slFill = slLeg ? parseFloat(slLeg.filled_avg_price || 0) : null;
+          const slPnl = slFill ? (isBull ? (slFill-entryPrice)*qty : (entryPrice-slFill)*qty) : null;
+          if (slPnl != null) totalPnl += slPnl;
+          lHtml += `<div class="leg-row"><span class="leg-label">SL</span><span class="leg-price" style="color:var(--red);">${slFill?fmt(slFill):'—'}</span><span class="leg-shares">${qty} sh</span><span class="leg-status" style="color:var(--red);">stop loss</span>${slPnl!=null?`<span class="leg-pnl" style="color:var(--red);">${sign(slPnl)}${fmt(slPnl)}</span>`:''}</div>`;
+        }
       }
-      if (slHit) {
-        const slLegFill = allLegs.find(l => (l.type === 'stop_limit' || l.type === 'stop') && l.status === 'filled');
-        const slFill = slLegFill ? parseFloat(slLegFill.filled_avg_price || 0) : null;
-        const remainQty = t1 ? qty - Math.floor(qty / 3) : qty;
-        const slPnl = slFill ? (isBull ? (slFill - entryPrice) * remainQty : (entryPrice - slFill) * remainQty) : null;
-        if (slPnl != null) totalPnl += slPnl;
-        lHtml += `<div class="leg-row"><span class="leg-label">SL</span><span class="leg-price" style="color:var(--red);">${slFill ? fmt(slFill) : '—'}</span><span class="leg-shares">${remainQty} sh</span><span class="leg-status" style="color:var(--red);">stop loss</span>${slPnl!=null?`<span class="leg-pnl" style="color:var(--red);">${sign(slPnl)}${fmt(slPnl)}</span>`:''}</div>`;
-      }
+
       if (!lHtml) return '';
-      return `<div class="legs-body open" style="margin-top:8px;">${lHtml}<div style="display:flex;gap:14px;padding:6px 10px;font-size:11px;font-family:var(--mono);border-top:1px solid var(--border);margin-top:2px;"><span style="color:${totalPnl>=0?'var(--green)':'var(--red)'};">Total: ${sign(totalPnl)}${fmt(totalPnl)}</span></div></div>`;
+      return lHtml + `<div style="display:flex;gap:14px;padding:6px 10px;font-size:11px;font-family:var(--mono);border-top:1px solid var(--border);margin-top:2px;"><span style="color:${totalPnl>=0?'var(--green)':'var(--red)'};">Total: ${sign(totalPnl)}${fmt(totalPnl)}</span></div>`;
     })();
 
     return `<div class="trade-card ${dirClass} closed-card" data-filter="closed" data-dir="${dirClass}">
@@ -954,7 +1006,12 @@ function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
           ${exitLabel  ? `Via <span style="color:var(--muted)">${exitLabel}</span>` : ''}
           Shares <span>${qty}</span>
         </div>
-        ${closedLegsHtml}
+        ${closedLegsHtml ? `
+        <div class="legs-toggle" onclick="toggleLegs('${domKey}_c')">
+          <span>Target Legs</span><span id="legs-arrow-${domKey}_c">▼</span>
+        </div>
+        <div class="legs-body open" id="legs-${domKey}_c">${closedLegsHtml}</div>
+        ` : ''}
       </div>
     </div>`;
   }
