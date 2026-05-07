@@ -454,7 +454,7 @@ app.post('/trade', async (req, res) => {
         await sendTelegram(`🟥✖️ ${acctEmoji} [${label}] Order rejected: ${symbol} ${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
         return res.status(r.status).json({ error: reason });
       }
-      const t2 = targets.length > 1 ? targets[1] : null;
+      const t2 = targets.length > 1 ? targets[1] : Math.round(tp * (isBull ? 1.005 : 0.995) * 100) / 100;
       const trail = parseFloat(trailPct) || 1.5;
       orderMetadata[d.id] = {
         mode: 'multi', symbol: symbol.toUpperCase(), isBull, label,

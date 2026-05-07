@@ -80,13 +80,11 @@ input[type="date"]:focus{border-color:#333;}
 
 /* ── Card base ──────────────────────────────────────────────────────────── */
 .trade-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;position:relative;}
-.trade-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;}
-.trade-card.bull::before{background:var(--blue);}
-.trade-card.bear::before{background:var(--orange);}
-.trade-card.bull{border-color:rgba(96,165,250,.28);}
-.trade-card.bear{border-color:rgba(251,146,60,.28);}
+.trade-card.bull{border:1px solid rgba(96,165,250,.5);}
+.trade-card.bear{border:1px solid rgba(251,146,60,.5);}
 .trade-card.closed-card{opacity:.62;}
-.card-inner{padding:14px 14px 14px 17px;}
+.card-inner{padding:14px;}
+.leg-status{font-size:9px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;}
 
 /* card header */
 .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:10px;}
@@ -810,16 +808,19 @@ function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
     const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
 
     const priceBar = buildPriceBar({ sl: slPrice, entry, targets: [t1, t2].filter(Boolean), current, isBull, trailPct });
-    const legs = buildLegs({ t1, t2, trailPct, entry, qty, isBull, tpLeg, slLeg });
+    const t1Filled = tpLeg?.status === 'filled' || meta?.status === 'target2_filled';
+    const t2Filled = meta?.status === 'target2_filled';
+    const legs = buildLegs({ t1, t2, trailPct, entry, qty, isBull, tpLeg, slLeg, current, t1Filled, t2Filled });
 
     return `<div class="trade-card ${dirClass}" data-filter="position" data-dir="${dirClass}">
       <div class="card-inner">
         <div class="card-head">
           <div>
             <div class="card-sym">${symbol}</div>
-            <div class="card-badges">${dirBadge}${acctBadge}<span class="badge badge-active">Active</span></div>
+            <div class="card-badges">${dirBadge}<span class="badge badge-active">Active</span></div>
           </div>
           <div class="card-price">
+            <div style="font-size:10px;color:var(--muted);text-align:right;margin-bottom:2px;font-family:var(--mono);">Current</div>
             <div class="card-price-val">${current ? fmt(current) : '—'}</div>
             <div class="card-pnl" style="color:${pnlColor};">${sign(pnl)}${fmt(pnl)} <span style="font-size:11px;">(${fmtPct(pnlPct)})</span></div>
           </div>
@@ -861,7 +862,7 @@ function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
         <div class="card-head">
           <div>
             <div class="card-sym">${symbol}</div>
-            <div class="card-badges">${dirBadge}${acctBadge}<span class="badge badge-pending">Pending</span></div>
+            <div class="card-badges">${dirBadge}<span class="badge badge-pending">Pending</span></div>
           </div>
           <div class="card-price">
             <div class="card-price-val">${current ? fmt(current) : '—'}</div>
@@ -904,6 +905,34 @@ function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
       ? '<span class="badge badge-win">Win</span>'
       : '<span class="badge badge-loss">Loss</span>';
 
+    // Build leg outcomes for closed bracket cards
+    const closedLegsHtml = (() => {
+      if (!entryPrice || isCanceled) return '';
+      const allLegs = entryOrd?.legs || [];
+      const filledLegs = allLegs.filter(l => l.status === 'filled');
+      const slHit = filledLegs.some(l => l.type === 'stop_limit' || l.type === 'stop');
+      let lHtml = '';
+      let totalPnl = 0;
+      if (t1) {
+        const share1 = Math.floor(qty / 3);
+        const t1Leg = allLegs.find(l => l.type === 'limit' && l.status === 'filled');
+        const t1Fill = t1Leg ? parseFloat(t1Leg.filled_avg_price || t1) : null;
+        const t1Pnl = t1Fill ? (isBull ? (t1Fill - entryPrice) * share1 : (entryPrice - t1Fill) * share1) : null;
+        if (t1Pnl != null) totalPnl += t1Pnl;
+        lHtml += `<div class="leg-row"><span class="leg-label">T1</span><span class="leg-price" style="color:${t1Pnl!=null?'var(--green)':'var(--muted)'};">${t1Fill ? fmt(t1Fill) : fmt(t1)}</span><span class="leg-shares">${share1} sh</span><span class="leg-status" style="color:${t1Pnl!=null?'var(--green)':'var(--muted)'};">${t1Pnl!=null?'✓ filled':'✗ not reached'}</span>${t1Pnl!=null?`<span class="leg-pnl" style="color:var(--green);">${sign(t1Pnl)}${fmt(t1Pnl)}</span>`:''}</div>`;
+      }
+      if (slHit) {
+        const slLegFill = allLegs.find(l => (l.type === 'stop_limit' || l.type === 'stop') && l.status === 'filled');
+        const slFill = slLegFill ? parseFloat(slLegFill.filled_avg_price || 0) : null;
+        const remainQty = t1 ? qty - Math.floor(qty / 3) : qty;
+        const slPnl = slFill ? (isBull ? (slFill - entryPrice) * remainQty : (entryPrice - slFill) * remainQty) : null;
+        if (slPnl != null) totalPnl += slPnl;
+        lHtml += `<div class="leg-row"><span class="leg-label">SL</span><span class="leg-price" style="color:var(--red);">${slFill ? fmt(slFill) : '—'}</span><span class="leg-shares">${remainQty} sh</span><span class="leg-status" style="color:var(--red);">stop loss</span>${slPnl!=null?`<span class="leg-pnl" style="color:var(--red);">${sign(slPnl)}${fmt(slPnl)}</span>`:''}</div>`;
+      }
+      if (!lHtml) return '';
+      return `<div class="legs-body open" style="margin-top:8px;">${lHtml}<div style="display:flex;gap:14px;padding:6px 10px;font-size:11px;font-family:var(--mono);border-top:1px solid var(--border);margin-top:2px;"><span style="color:${totalPnl>=0?'var(--green)':'var(--red)'};">Total: ${sign(totalPnl)}${fmt(totalPnl)}</span></div></div>`;
+    })();
+
     return `<div class="trade-card ${dirClass} closed-card" data-filter="closed" data-dir="${dirClass}">
       ${pnl != null ? `<div class="pnl-banner ${pnl >= 0 ? 'win' : 'loss'}">
         <span>${sign(pnl || 0)}${fmt(pnl)}</span>
@@ -913,7 +942,7 @@ function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
         <div class="card-head">
           <div>
             <div class="card-sym">${symbol}</div>
-            <div class="card-badges">${dirBadge}${acctBadge}${winLoss}<span class="badge badge-closed">${isCanceled ? entryOrd.status : 'Closed'}</span></div>
+            <div class="card-badges">${dirBadge}${winLoss}<span class="badge badge-closed">${isCanceled ? entryOrd.status : 'Closed'}</span></div>
           </div>
           <div class="card-price">
             ${exitPrice ? `<div class="card-price-val">${fmt(exitPrice)}</div>` : ''}
@@ -925,6 +954,7 @@ function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
           ${exitLabel  ? `Via <span style="color:var(--muted)">${exitLabel}</span>` : ''}
           Shares <span>${qty}</span>
         </div>
+        ${closedLegsHtml}
       </div>
     </div>`;
   }
@@ -966,7 +996,7 @@ function buildPriceBar({ sl, entry, targets, current, isBull, trailPct }) {
   if (sl) markers += `<div class="pb-marker sl" style="left:${SL_PCT}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">SL ${fmt(sl)}</div></div>`;
   markers += `<div class="pb-marker entry" style="left:${ENTRY_PCT}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">Entry ${fmt(entry)}</div></div>`;
   validTargets.forEach((t, i) => {
-    markers += `<div class="pb-marker target" style="left:${tPos(i).toFixed(1)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">T${i+1} ${fmt(t)}</div></div>`;
+    markers += `<div class="pb-marker target" style="left:${tPos(i).toFixed(1)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">T${i+1}</div></div>`;
   });
   if (trailPct) markers += `<div class="pb-marker target" style="left:${tPos(validTargets.length).toFixed(1)}%;opacity:.6"><div class="pb-marker-dot" style="background:var(--amber);"></div><div class="pb-marker-label">Trail ${trailPct}%</div></div>`;
   if (currentPct !== null) markers += `<div class="pb-marker current" style="left:${currentPct.toFixed(1)}%"><div class="pb-marker-dot"></div><div class="pb-marker-label">${fmt(current)}</div></div>`;
@@ -974,47 +1004,66 @@ function buildPriceBar({ sl, entry, targets, current, isBull, trailPct }) {
   return `<div class="price-bar-wrap"><div class="price-bar-track">${fill}${markers}</div></div>`;
 }
 
-function buildLegs({ t1, t2, trailPct, entry, qty, isBull, tpLeg, slLeg }) {
+function buildLegs({ t1, t2, trailPct, entry, qty, isBull, tpLeg, slLeg, current, t1Filled, t2Filled }) {
   const share1 = Math.floor(qty / 3), share2 = Math.floor(qty / 3), share3 = qty - share1 - share2;
   let html = '';
+  let lockedPnl = 0, unrealizedPnl = 0;
+
   if (t1) {
     const pnl = isBull ? (t1 - entry) * share1 : (entry - t1) * share1;
-    const t1Filled = tpLeg?.status === 'filled';
+    if (t1Filled) lockedPnl += pnl;
     html += `<div class="leg-row">
       <span class="leg-label">T1</span>
       <span class="leg-price" style="color:var(--green);">${fmt(t1)}</span>
       <span class="leg-shares">${share1} sh</span>
-      <span class="badge ${t1Filled ? 'badge-filled' : 'badge-pending'}" style="font-size:10px;">${t1Filled ? 'Filled' : 'Pending'}</span>
-      <span class="leg-pnl" style="color:${pnl>=0?'var(--green)':'var(--red)'};">${sign(pnl)}${fmt(pnl)}</span>
+      <span class="leg-status" style="color:${t1Filled ? 'var(--green)' : 'var(--muted)'};">${t1Filled ? 'locked' : 'pending'}</span>
+      <span class="leg-pnl" style="color:${t1Filled ? 'var(--green)' : 'var(--muted)'};">${sign(pnl)}${fmt(pnl)}</span>
     </div>`;
   }
   if (t2) {
     const pnl = isBull ? (t2 - entry) * share2 : (entry - t2) * share2;
+    if (t2Filled) lockedPnl += pnl;
     html += `<div class="leg-row">
       <span class="leg-label">T2</span>
       <span class="leg-price" style="color:var(--green);opacity:.8;">${fmt(t2)}</span>
       <span class="leg-shares">${share2} sh</span>
-      <span class="badge badge-pending" style="font-size:10px;">Pending</span>
-      <span class="leg-pnl" style="color:var(--green);">${sign(pnl)}${fmt(pnl)}</span>
+      <span class="leg-status" style="color:${t2Filled ? 'var(--green)' : 'var(--muted)'};">${t2Filled ? 'locked' : 'pending'}</span>
+      <span class="leg-pnl" style="color:${t2Filled ? 'var(--green)' : 'var(--muted)'};">${sign(pnl)}${fmt(pnl)}</span>
     </div>`;
   }
   if (trailPct) {
+    const unrealized = current ? (isBull ? (current - entry) * share3 : (entry - current) * share3) : null;
+    if (unrealized != null) unrealizedPnl += unrealized;
+    const uColor = unrealized != null ? (unrealized >= 0 ? 'var(--blue)' : 'var(--red)') : 'var(--muted)';
     html += `<div class="leg-row">
       <span class="leg-label">T3</span>
       <span class="leg-price" style="color:var(--amber);">Trail ${trailPct}%</span>
       <span class="leg-shares">${share3} sh</span>
-      <span class="badge badge-pending" style="font-size:10px;">Trailing</span>
+      <span class="leg-status" style="color:var(--blue);">trailing</span>
+      ${unrealized != null ? `<span class="leg-pnl" style="color:${uColor};">${sign(unrealized)}${fmt(unrealized)}</span>` : ''}
     </div>`;
   } else if (!t2 && t1) {
-    const pnl = isBull ? (t1 - entry) * share3 : (entry - t1) * share3;
+    const filled = tpLeg?.status === 'filled';
+    const pnl = isBull ? (t1 - entry) * qty : (entry - t1) * qty;
+    if (filled) lockedPnl += pnl;
     html += `<div class="leg-row">
       <span class="leg-label">TP</span>
       <span class="leg-price" style="color:var(--green);">${fmt(t1)}</span>
       <span class="leg-shares">${qty} sh</span>
-      <span class="badge ${tpLeg?.status==='filled'?'badge-filled':'badge-pending'}" style="font-size:10px;">${tpLeg?.status==='filled'?'Filled':'Pending'}</span>
-      <span class="leg-pnl" style="color:${pnl>=0?'var(--green)':'var(--red)'};">${sign(pnl)}${fmt(pnl)}</span>
+      <span class="leg-status" style="color:${filled ? 'var(--green)' : 'var(--muted)'};">${filled ? 'locked' : 'pending'}</span>
+      <span class="leg-pnl" style="color:${filled ? 'var(--green)' : 'var(--muted)'};">${sign(pnl)}${fmt(pnl)}</span>
     </div>`;
   }
+
+  // Summary line
+  const summaryParts = [];
+  if (t1Filled || t2Filled) summaryParts.push(`<span style="color:var(--green);">Locked: ${sign(lockedPnl)}${fmt(lockedPnl)}</span>`);
+  if (trailPct && unrealizedPnl !== 0) {
+    const uc = unrealizedPnl >= 0 ? 'var(--blue)' : 'var(--red)';
+    summaryParts.push(`<span style="color:${uc};">Unrealized: ${sign(unrealizedPnl)}${fmt(unrealizedPnl)}</span>`);
+  }
+  if (summaryParts.length) html += `<div style="display:flex;gap:14px;padding:6px 10px;font-size:11px;font-family:var(--mono);border-top:1px solid var(--border);margin-top:2px;">${summaryParts.join('')}</div>`;
+
   return html;
 }
 
