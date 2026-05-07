@@ -781,7 +781,9 @@ async function handleTarget2Fill(entryId, meta, key, secret) {
 
 // ── Order metadata persistence ─────────────────────────────────────────────────
 
-const ORDER_META_FILE = path.join(__dirname, '.order-metadata.json');
+const ORDER_META_FILE = process.env.DB_PATH
+  ? path.join(path.dirname(process.env.DB_PATH), '.order-metadata.json')
+  : path.join(__dirname, '.order-metadata.json');
 
 function loadOrderMetadata() {
   try {
@@ -843,7 +845,15 @@ async function seedAccount(key, secret) {
     const r = await fetch(`${ALPACA_BASE}/orders?status=filled&limit=50`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
     if (!r.ok) return;
     const orders = await r.json();
-    for (const order of orders) seenOrderIds.add(order.id);
+    // Don't seed orders that are still pending exit placement — they need to be processed
+    const pendingEntryIds = new Set(
+      Object.entries(orderMetadata)
+        .filter(([, m]) => m.mode === 'multi' && m.status === 'pending_fill')
+        .map(([id]) => id)
+    );
+    for (const order of orders) {
+      if (!pendingEntryIds.has(order.id)) seenOrderIds.add(order.id);
+    }
   } catch (e) { console.error('Seed error:', e.message); }
 }
 
