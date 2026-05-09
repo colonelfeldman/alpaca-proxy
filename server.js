@@ -1077,33 +1077,48 @@ async function closeAllPositions(triggeredBy = 'manual') {
     { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR' },
   ].filter(a => a.key && a.secret);
 
-  let closed = 0, errors = [];
+  let submitted = 0, errors = [];
   const acctSymbols = {};
+  const acctHeaders = {};
+
   for (const acct of accounts) {
     const headers = { 'APCA-API-KEY-ID': acct.key, 'APCA-API-SECRET-KEY': acct.secret, 'Content-Type': 'application/json' };
+    acctHeaders[acct.label] = headers;
     try {
       // Fetch positions before closing so we can report symbols and P&L
       const posRes = await fetch(`${ALPACA_BASE}/positions`, { headers });
       const positions = posRes.ok ? await posRes.json() : [];
+      if (!Array.isArray(positions) || positions.length === 0) continue;
+
       // Cancel all open orders first
       await fetch(`${ALPACA_BASE}/orders`, { method: 'DELETE', headers });
-      // Close all positions at market
+
+      // Submit close orders — Alpaca returns 207 Multi-Status with per-position results
       const r = await fetch(`${ALPACA_BASE}/positions`, { method: 'DELETE', headers });
-      if (r.ok) {
-        const result = await r.json();
-        closed += Array.isArray(result) ? result.length : 0;
-        if (Array.isArray(positions) && positions.length) {
-          acctSymbols[acct.label] = positions.map(p => {
-            const pl = parseFloat(p.unrealized_pl);
-            const sgn = pl >= 0 ? '+' : '-';
-            return `${p.symbol} (${sgn}$${Math.abs(pl).toFixed(2)})`;
-          });
-        }
-      }
+      const result = await r.json();
+      console.log(`[${acct.label}] DELETE /positions status=${r.status} body=${JSON.stringify(result)}`);
+
+      // Count only the individual close requests that Alpaca accepted (status 200 in each wrapper)
+      const accepted = Array.isArray(result)
+        ? result.filter(item => item.status === 200).length
+        : (r.ok ? positions.length : 0);
+      submitted += accepted;
+
+      const failed = Array.isArray(result)
+        ? result.filter(item => item.status !== 200).map(item => item.body?.message || 'unknown error')
+        : [];
+      if (failed.length) errors.push(`[${acct.label}] ${failed.join(', ')}`);
+
+      acctSymbols[acct.label] = positions.map(p => {
+        const pl = parseFloat(p.unrealized_pl);
+        const sgn = pl >= 0 ? '+' : '-';
+        return `${p.symbol} (${sgn}$${Math.abs(pl).toFixed(2)})`;
+      });
     } catch(e) { errors.push(`[${acct.label}] ${e.message}`); }
   }
+
   const tag = triggeredBy === 'auto' ? '⏰ Auto-close EOD' : '🔴 Manual close-all';
-  const lines = [`${tag} — ${closed} position(s) closed at market`];
+  const lines = [`${tag} — ${submitted} close order(s) submitted`];
   for (const [label, syms] of Object.entries(acctSymbols)) {
     if (syms.length) lines.push(`${label}: ${syms.join(', ')}`);
   }
@@ -1111,7 +1126,33 @@ async function closeAllPositions(triggeredBy = 'manual') {
   const msg = lines.join('\n');
   await sendTelegram(msg).catch(e => console.error('Telegram error:', e.message));
   console.log(msg);
-  return { closed, errors };
+
+  // Verify fills after 15 seconds — alert if any positions remain open
+  setTimeout(async () => {
+    const stillOpen = [];
+    for (const acct of accounts) {
+      const headers = acctHeaders[acct.label];
+      if (!headers) continue;
+      try {
+        const posRes = await fetch(`${ALPACA_BASE}/positions`, { headers });
+        const remaining = posRes.ok ? await posRes.json() : [];
+        if (Array.isArray(remaining) && remaining.length > 0) {
+          stillOpen.push(`${acct.label}: ${remaining.map(p => p.symbol).join(', ')}`);
+        }
+      } catch(e) { /* ignore verification errors */ }
+    }
+    if (stillOpen.length > 0) {
+      const warn = `⚠️ Close orders submitted but positions still open after 15s — may need manual close:\n${stillOpen.join('\n')}`;
+      await sendTelegram(warn).catch(() => {});
+      console.log(warn);
+    } else if (submitted > 0) {
+      const confirm = `✅ Confirmed — all positions closed`;
+      await sendTelegram(confirm).catch(() => {});
+      console.log(confirm);
+    }
+  }, 15_000);
+
+  return { submitted, errors };
 }
 
 app.post('/close-all', async (req, res) => {
@@ -1122,14 +1163,14 @@ app.post('/close-all', async (req, res) => {
 });
 
 app.get('/settings/auto-close', (req, res) => {
-  res.json({ enabled: getSetting('autoCloseEnabled', false), time: getSetting('autoCloseTime', '15:50') });
+  res.json({ enabled: getSetting('autoCloseEnabled', false), time: getSetting('autoCloseTime', '15:45') });
 });
 
 app.post('/settings/auto-close', (req, res) => {
   const { enabled, time } = req.body;
   if (enabled !== undefined) setSetting('autoCloseEnabled', !!enabled);
   if (time) setSetting('autoCloseTime', time);
-  res.json({ ok: true, enabled: getSetting('autoCloseEnabled', false), time: getSetting('autoCloseTime', '15:50') });
+  res.json({ ok: true, enabled: getSetting('autoCloseEnabled', false), time: getSetting('autoCloseTime', '15:45') });
 });
 
 let lastAutoCloseDate = null;
@@ -1142,13 +1183,16 @@ setInterval(() => {
     syncPendingOrderStatuses();
     sendDailySummary();
   }
-  // Auto-close check
+  // Auto-close check — use >= window so a server restart near close time doesn't miss it
   if (getSetting('autoCloseEnabled', false) && lastAutoCloseDate !== dateStr) {
-    const closeTime = getSetting('autoCloseTime', '15:50');
+    const closeTime = getSetting('autoCloseTime', '15:45');
     const [h, m] = closeTime.split(':').map(Number);
     const etNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const isWeekday = etNow.getDay() >= 1 && etNow.getDay() <= 5;
-    if (isWeekday && etNow.getHours() === h && etNow.getMinutes() === m) {
+    const etMinutes = etNow.getHours() * 60 + etNow.getMinutes();
+    const targetMinutes = h * 60 + m;
+    // Fire if we're within the target window (on or after close time, but before 4:00 PM)
+    if (isWeekday && etMinutes >= targetMinutes && etMinutes < 16 * 60) {
       lastAutoCloseDate = dateStr;
       closeAllPositions('auto');
     }
