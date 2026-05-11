@@ -63,6 +63,8 @@ try { db.exec(`ALTER TABLE trades ADD COLUMN sl_order_id TEXT`); } catch(e) {}
 try { db.exec(`ALTER TABLE trades ADD COLUMN trail_order_id TEXT`); } catch(e) {}
 try { db.exec(`ALTER TABLE trades ADD COLUMN status TEXT DEFAULT 'pending'`); } catch(e) {}
 try { db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`); } catch(e) {}
+// Prevents two extension instances from placing the same setup twice on the same day
+try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_setup_daily ON parsed_setups(date, symbol, direction, trigger_price)`); } catch(e) {}
 
 function getSetting(key, defaultVal) {
   const row = db.prepare('SELECT value FROM settings WHERE key=?').get(key);
@@ -151,6 +153,23 @@ app.post('/claude', async (req, res) => {
 // ── Order metadata (for dashboard multi-target display) ────────────────────────
 app.get('/api/order-metadata', (req, res) => {
   res.json(orderMetadata);
+});
+
+// Used by the Chrome extension to pre-check if a setup was already placed today
+// (works across multiple computers since both talk to the same server/DB)
+app.get('/api/setup-traded', (req, res) => {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret && req.headers['x-webhook-secret'] !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const { symbol, direction, trigger } = req.query;
+  if (!symbol || !direction || !trigger) {
+    return res.status(400).json({ error: 'Missing symbol, direction, or trigger' });
+  }
+  const row = db.prepare(
+    `SELECT id FROM parsed_setups WHERE date = ? AND symbol = ? AND direction = ? AND trigger_price = ?`
+  ).get(dateET(), symbol.toUpperCase(), direction, parseFloat(trigger));
+  res.json({ traded: !!row });
 });
 
 // ── DB: save parsed setup ──────────────────────────────────────────────────────
@@ -433,11 +452,16 @@ app.post('/trade', async (req, res) => {
   const acctEmoji = label === 'BULL' ? '🟢' : '🔵';
   const apiHeaders = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret_key, 'Content-Type': 'application/json' };
 
-  // Save setup to DB
+  // Save setup to DB — reject as duplicate if this exact setup was already placed today
   try {
     db.prepare(`INSERT INTO parsed_setups (date,symbol,direction,trigger_price,target1,target2,target3,account) VALUES (?,?,?,?,?,?,?,?)`)
       .run(dateET(), symbol.toUpperCase(), direction, trigger, targets[0]||null, targets[1]||null, targets[2]||null, isBull?'bull':'bear');
-  } catch(e) { console.error('DB setup save error:', e.message); }
+  } catch(e) {
+    if (e.message.includes('UNIQUE constraint')) {
+      return res.status(409).json({ error: 'Setup already traded today', alreadyTraded: true });
+    }
+    console.error('DB setup save error:', e.message);
+  }
 
   try {
     if (mode === 'multi') {
