@@ -1114,8 +1114,11 @@ async function closeAllPositions(triggeredBy = 'manual') {
       const positions = posRes.ok ? await posRes.json() : [];
       if (!Array.isArray(positions) || positions.length === 0) continue;
 
-      // Cancel all open orders first
+      // Cancel all open orders first — then wait 3s for Alpaca to finish processing
+      // the cancellations before closing positions. Without the delay, bracket order
+      // legs (TP/SL) may still be locking shares, causing "insufficient qty" errors.
       await fetch(`${ALPACA_BASE}/orders`, { method: 'DELETE', headers });
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
       // Submit close orders — Alpaca returns 207 Multi-Status with per-position results
       const r = await fetch(`${ALPACA_BASE}/positions`, { method: 'DELETE', headers });
@@ -1166,9 +1169,39 @@ async function closeAllPositions(triggeredBy = 'manual') {
       } catch(e) { /* ignore verification errors */ }
     }
     if (stillOpen.length > 0) {
-      const warn = `⚠️ Close orders submitted but positions still open after 15s — may need manual close:\n${stillOpen.join('\n')}`;
-      await sendTelegram(warn).catch(() => {});
-      console.log(warn);
+      console.log(`[EOD] Positions still open after 15s — retrying close: ${stillOpen.join(', ')}`);
+      await sendTelegram(`⚠️ EOD: positions still open after 15s — retrying close:\n${stillOpen.join('\n')}`).catch(() => {});
+      // One automatic retry with fresh cancel + wait + close
+      for (const acct of accounts) {
+        const headers = acctHeaders[acct.label];
+        if (!headers) continue;
+        try {
+          await fetch(`${ALPACA_BASE}/orders`, { method: 'DELETE', headers });
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          const retryRes = await fetch(`${ALPACA_BASE}/positions`, { method: 'DELETE', headers });
+          const retryBody = await retryRes.json();
+          console.log(`[${acct.label}] Retry close status=${retryRes.status} body=${JSON.stringify(retryBody)}`);
+        } catch(e) { console.error(`[${acct.label}] Retry close error:`, e.message); }
+      }
+      // Final check after retry
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      const finalOpen = [];
+      for (const acct of accounts) {
+        const headers = acctHeaders[acct.label];
+        if (!headers) continue;
+        try {
+          const posRes = await fetch(`${ALPACA_BASE}/positions`, { headers });
+          const remaining = posRes.ok ? await posRes.json() : [];
+          if (Array.isArray(remaining) && remaining.length > 0) {
+            finalOpen.push(`${acct.label}: ${remaining.map(p => p.symbol).join(', ')}`);
+          }
+        } catch(e) { /* ignore */ }
+      }
+      if (finalOpen.length > 0) {
+        await sendTelegram(`🚨 EOD retry failed — positions STILL open, manual close required:\n${finalOpen.join('\n')}`).catch(() => {});
+      } else {
+        await sendTelegram(`✅ EOD retry succeeded — all positions now closed`).catch(() => {});
+      }
     } else if (submitted > 0) {
       const confirm = `✅ Confirmed — all positions closed`;
       await sendTelegram(confirm).catch(() => {});
