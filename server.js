@@ -1118,7 +1118,7 @@ async function closeAllPositions(triggeredBy = 'manual') {
       // the cancellations before closing positions. Without the delay, bracket order
       // legs (TP/SL) may still be locking shares, causing "insufficient qty" errors.
       await fetch(`${ALPACA_BASE}/orders`, { method: 'DELETE', headers });
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 30000));
 
       // Submit close orders — Alpaca returns 207 Multi-Status with per-position results
       const r = await fetch(`${ALPACA_BASE}/positions`, { method: 'DELETE', headers });
@@ -1177,7 +1177,7 @@ async function closeAllPositions(triggeredBy = 'manual') {
         if (!headers) continue;
         try {
           await fetch(`${ALPACA_BASE}/orders`, { method: 'DELETE', headers });
-          await new Promise(resolve => setTimeout(resolve, 3000));
+          await new Promise(resolve => setTimeout(resolve, 30000));
           const retryRes = await fetch(`${ALPACA_BASE}/positions`, { method: 'DELETE', headers });
           const retryBody = await retryRes.json();
           console.log(`[${acct.label}] Retry close status=${retryRes.status} body=${JSON.stringify(retryBody)}`);
