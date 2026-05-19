@@ -963,9 +963,41 @@ async function pollAccount(key, secret, label) {
         isSL:    exitMeta ? order.id === exitMeta.exitOrderIds?.slOrderId    : false,
       });
 
-      // Save filled entry orders to trades DB (skip exit legs)
+      // Save filled entry orders to trades DB; also record P&L for multi-target exits
       try {
         const isExitOrder = !!exitToEntry[order.id];
+        if (isExitOrder && entryId) {
+          // Write P&L for multi-target exit fills
+          const isSL    = exitMeta ? order.id === exitMeta.exitOrderIds?.slOrderId    : false;
+          const isT1loc = exitMeta ? order.id === exitMeta.exitOrderIds?.t1OrderId    : false;
+          const isT2loc = exitMeta ? order.id === exitMeta.exitOrderIds?.t2OrderId    : false;
+          const isTrl   = exitMeta ? order.id === exitMeta.exitOrderIds?.trailOrderId : false;
+          const exitPrice = parseFloat(order.filled_avg_price || 0);
+          const exitQty   = parseFloat(order.filled_qty || order.qty || 0);
+          if (entryFillPrice && exitPrice && exitQty) {
+            const row = db.prepare('SELECT direction, dollar_amount FROM trades WHERE alpaca_order_id=?').get(entryId);
+            if (row && !row.exit_reason) {
+              const isBull = row.direction === 'bull';
+              const pnl    = isBull ? (exitPrice - entryFillPrice) * exitQty : (entryFillPrice - exitPrice) * exitQty;
+              const pct    = row.dollar_amount ? pnl / row.dollar_amount * 100 : 0;
+              const exitReason = isSL ? 'stop_loss' : isT2loc ? 'target2' : isTrl ? 'trail' : 'target1';
+              const exitTimeET = order.filled_at
+                ? new Date(order.filled_at).toLocaleString('en-US', { timeZone: 'America/New_York' })
+                : nowETStr();
+              db.prepare(`
+                UPDATE trades SET total_pnl=?, total_pct=?, exit_reason=?, exit_time_et=?,
+                  t1_filled_at=COALESCE(t1_filled_at,?), t1_pnl=COALESCE(t1_pnl,?),
+                  stop_loss_hit=?, status='closed'
+                WHERE alpaca_order_id=?
+              `).run(
+                pnl, pct, exitReason, exitTimeET,
+                isT1loc ? exitTimeET : null, isT1loc ? pnl : null,
+                isSL ? 1 : 0,
+                entryId
+              );
+            }
+          }
+        }
         if (!isExitOrder) {
           const direction  = (meta?.isBull !== undefined) ? (meta.isBull ? 'bull' : 'bear') : (order.side === 'buy' ? 'bull' : 'bear');
           const entryPrice = parseFloat(order.filled_avg_price || 0);
@@ -1006,9 +1038,61 @@ async function pollAccount(key, secret, label) {
   } catch (e) { console.error(`[${label}] Poll error:`, e.message); }
 }
 
+async function syncBracketExits(key, secret, label) {
+  if (!key || !secret) return;
+  try {
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    const r = await fetch(
+      `${ALPACA_BASE}/orders?status=all&limit=200&after=${todayStart.toISOString()}&nested=true`,
+      { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } }
+    );
+    if (!r.ok) return;
+    const orders = await r.json();
+    for (const order of orders) {
+      if (order.order_class !== 'bracket' || order.status !== 'filled') continue;
+      const legs = order.legs || [];
+      const filledLeg = legs.find(l => l.status === 'filled');
+      if (!filledLeg) continue;
+      const trade = db.prepare('SELECT * FROM trades WHERE alpaca_order_id=?').get(order.id);
+      if (!trade || trade.exit_reason) continue;
+      const entryPrice = parseFloat(order.filled_avg_price || 0);
+      const qty        = parseFloat(order.filled_qty || order.qty || 0);
+      const exitPrice  = parseFloat(filledLeg.filled_avg_price || 0);
+      if (!entryPrice || !exitPrice || !qty) continue;
+      const isBull = order.side === 'buy';
+      const pnl    = isBull ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty;
+      const pct    = pnl / (entryPrice * qty) * 100;
+      const isT1   = filledLeg.type === 'limit';
+      const exitReason = isT1 ? 'target1' : 'stop_loss';
+      const exitTimeET = filledLeg.filled_at
+        ? new Date(filledLeg.filled_at).toLocaleString('en-US', { timeZone: 'America/New_York' })
+        : nowETStr();
+      const entryMs    = order.filled_at     ? new Date(order.filled_at).getTime()     : null;
+      const exitMs     = filledLeg.filled_at ? new Date(filledLeg.filled_at).getTime() : null;
+      const holdMinutes = entryMs && exitMs ? (exitMs - entryMs) / 60000 : null;
+      db.prepare(`
+        UPDATE trades SET
+          total_pnl=?, total_pct=?, exit_reason=?, exit_time_et=?, hold_minutes=?,
+          t1_filled_at=?, t1_pnl=?, stop_loss_hit=?, status='closed'
+        WHERE alpaca_order_id=?
+      `).run(
+        pnl, pct, exitReason, exitTimeET, holdMinutes,
+        isT1 ? exitTimeET : null,
+        isT1 ? pnl : null,
+        isT1 ? 0 : 1,
+        order.id
+      );
+      console.log(`[${label}] bracket exit synced: ${order.symbol} ${exitReason} P&L=$${pnl.toFixed(2)}`);
+    }
+  } catch(e) { console.error(`[${label}] syncBracketExits error:`, e.message); }
+}
+
 async function pollFilledOrders() {
   await pollAccount(process.env.ALPACA_KEY, process.env.ALPACA_SECRET, 'BULL');
   await pollAccount(process.env.ALPACA_BEAR_KEY, process.env.ALPACA_BEAR_SECRET, 'BEAR');
+  await syncBracketExits(process.env.ALPACA_KEY, process.env.ALPACA_SECRET, 'BULL');
+  await syncBracketExits(process.env.ALPACA_BEAR_KEY, process.env.ALPACA_BEAR_SECRET, 'BEAR');
 }
 
 // ── Daily summary at 21:00 UTC (4pm ET) ───────────────────────────────────────
@@ -1216,6 +1300,14 @@ app.post('/close-all', async (req, res) => {
   try {
     const result = await closeAllPositions('manual');
     res.json({ ok: true, ...result });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/db/sync-exits', async (req, res) => {
+  try {
+    await syncBracketExits(process.env.ALPACA_KEY, process.env.ALPACA_SECRET, 'BULL');
+    await syncBracketExits(process.env.ALPACA_BEAR_KEY, process.env.ALPACA_BEAR_SECRET, 'BEAR');
+    res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
