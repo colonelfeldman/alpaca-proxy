@@ -704,27 +704,29 @@ function classifyOrder(order) {
 }
 
 function buildTradeMessage(order, label, ctx = {}) {
-  const symbol = order.symbol || '?';
-  const side   = (order.side || '').toUpperCase();
-  const qty    = parseFloat(order.filled_qty || order.qty || 0);
-  const price  = parseFloat(order.filled_avg_price || 0);
-  const $ = n => '$' + parseFloat(n).toFixed(2);
-  const timeET = order.filled_at
+  const symbol  = order.symbol || '?';
+  const side    = (order.side || '').toUpperCase();
+  const qty     = parseFloat(order.filled_qty || order.qty || 0);
+  const price   = parseFloat(order.filled_avg_price || 0);
+  const isLong  = order.side === 'buy';
+  const $       = n => '$' + parseFloat(n).toFixed(2);
+  const timeET  = order.filled_at
     ? new Date(order.filled_at).toLocaleString('en-US', { timeZone: 'America/New_York', hour12: true, hour: 'numeric', minute: '2-digit', second: '2-digit' })
     : nowETStr();
   const { entryMeta, entryPrice, isT1, isT2, isTrail, isSL } = ctx;
   const isExit = isT1 || isT2 || isTrail || isSL;
-  const isBull = label === 'BULL';
 
   if (!isExit) {
-    // Entry fill
-    const lines = [`✅ ${label} | ${symbol} — Entry filled`];
+    // Entry fill — 📈 for long, 📉 for short
+    const dirEmoji = isLong ? '📈' : '📉';
+    const dirLabel = isLong ? 'Long' : 'Short';
+    const lines = [`${dirEmoji} ${label} | ${symbol} — ${dirLabel} entry filled`];
     lines.push(`${side} ${qty} sh @ ${$(price)}${price && qty ? ` · ${$(price * qty)} invested` : ''}`);
     if (entryMeta) {
       const parts = [
-        entryMeta.target1    && `T1 ${$(entryMeta.target1)}`,
-        entryMeta.target2    && `T2 ${$(entryMeta.target2)}`,
-        entryMeta.trailPct   && `Trail ${entryMeta.trailPct}%`,
+        entryMeta.target1       && `T1 ${$(entryMeta.target1)}`,
+        entryMeta.target2       && `T2 ${$(entryMeta.target2)}`,
+        entryMeta.trailPct      && `Trail ${entryMeta.trailPct}%`,
         entryMeta.stopLossPrice && `SL ${$(entryMeta.stopLossPrice)}`,
       ].filter(Boolean);
       if (parts.length) lines.push(parts.join(' · '));
@@ -733,11 +735,12 @@ function buildTradeMessage(order, label, ctx = {}) {
     return lines.join('\n');
   }
 
-  // Exit fill
-  const legEmoji = isSL ? '🛑' : isT2 ? '🎯🎯' : isTrail ? '🔄' : '🎯';
+  // Exit fill — P&L direction: closing sell = was long, closing buy = was short
+  const wasLong  = order.side === 'sell';
+  const legEmoji = isSL ? '🛑' : isT2 ? '✅✅' : isTrail ? '🔄' : '✅';
   const legLabel = isSL ? 'Stop loss hit' : isT2 ? 'T2 hit' : isTrail ? 'Trailing stop' : 'T1 hit';
   const pnl = entryPrice && price && qty
-    ? (isBull ? price - entryPrice : entryPrice - price) * qty : null;
+    ? (wasLong ? price - entryPrice : entryPrice - price) * qty : null;
   const pct = pnl != null && entryPrice ? (pnl / (entryPrice * qty)) * 100 : null;
   const sgn = n => n >= 0 ? '+' : '';
 
@@ -954,22 +957,24 @@ async function pollAccount(key, secret, label) {
           entryFillPrice = row?.entry_price || null;
         } catch(e) {}
       }
+      // For bracket exits exitMeta is null — determine type from order_type
+      const isBracketExit = !!entryId && !exitMeta;
       await sendTradeNotification(order, label, {
-        entryMeta:  meta,       // only populated for entry fills (meta = orderMetadata[order.id])
+        entryMeta:  meta,
         entryPrice: entryFillPrice,
-        isT1:    exitMeta ? order.id === exitMeta.exitOrderIds?.t1OrderId    : false,
+        isT1:    exitMeta ? order.id === exitMeta.exitOrderIds?.t1OrderId    : (isBracketExit && order.order_type === 'limit'),
         isT2:    exitMeta ? order.id === exitMeta.exitOrderIds?.t2OrderId    : false,
         isTrail: exitMeta ? order.id === exitMeta.exitOrderIds?.trailOrderId : false,
-        isSL:    exitMeta ? order.id === exitMeta.exitOrderIds?.slOrderId    : false,
+        isSL:    exitMeta ? order.id === exitMeta.exitOrderIds?.slOrderId    : (isBracketExit && (order.order_type === 'stop' || order.order_type === 'stop_limit')),
       });
 
       // Save filled entry orders to trades DB; also record P&L for multi-target exits
       try {
         const isExitOrder = !!exitToEntry[order.id];
         if (isExitOrder && entryId) {
-          // Write P&L for multi-target exit fills
-          const isSL    = exitMeta ? order.id === exitMeta.exitOrderIds?.slOrderId    : false;
-          const isT1loc = exitMeta ? order.id === exitMeta.exitOrderIds?.t1OrderId    : false;
+          // Write P&L for exit fills (multi-target and bracket)
+          const isSL    = exitMeta ? order.id === exitMeta.exitOrderIds?.slOrderId    : (order.order_type === 'stop' || order.order_type === 'stop_limit');
+          const isT1loc = exitMeta ? order.id === exitMeta.exitOrderIds?.t1OrderId    : (order.order_type === 'limit');
           const isT2loc = exitMeta ? order.id === exitMeta.exitOrderIds?.t2OrderId    : false;
           const isTrl   = exitMeta ? order.id === exitMeta.exitOrderIds?.trailOrderId : false;
           const exitPrice = parseFloat(order.filled_avg_price || 0);
@@ -1032,6 +1037,12 @@ async function pollAccount(key, secret, label) {
             entryPrice, shares, entryPrice * shares,
             t1Price, slPrice, entryTimeET, orderMode
           );
+          // Register bracket exit legs so they're identified as exits when they fill
+          if (order.order_class === 'bracket') {
+            for (const leg of (order.legs || [])) {
+              if (leg.id) exitToEntry[leg.id] = order.id;
+            }
+          }
         }
       } catch(e) { console.error(`[${label}] DB trade save error:`, e.message); }
     }
