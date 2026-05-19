@@ -1038,13 +1038,21 @@ async function pollAccount(key, secret, label) {
   } catch (e) { console.error(`[${label}] Poll error:`, e.message); }
 }
 
-async function syncBracketExits(key, secret, label) {
+async function syncBracketExits(key, secret, label, dateStr = null) {
   if (!key || !secret) return;
   try {
-    const todayStart = new Date();
-    todayStart.setUTCHours(0, 0, 0, 0);
+    let after, until = '';
+    if (dateStr) {
+      after = new Date(dateStr + 'T04:00:00Z').toISOString();
+      const nextDay = new Date(new Date(dateStr + 'T04:00:00Z').getTime() + 86400000);
+      until = `&until=${nextDay.toISOString()}`;
+    } else {
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      after = todayStart.toISOString();
+    }
     const r = await fetch(
-      `${ALPACA_BASE}/orders?status=all&limit=200&after=${todayStart.toISOString()}&nested=true`,
+      `${ALPACA_BASE}/orders?status=all&limit=200&after=${after}${until}&nested=true`,
       { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } }
     );
     if (!r.ok) return;
@@ -1305,8 +1313,9 @@ app.post('/close-all', async (req, res) => {
 
 app.post('/db/sync-exits', async (req, res) => {
   try {
-    await syncBracketExits(process.env.ALPACA_KEY, process.env.ALPACA_SECRET, 'BULL');
-    await syncBracketExits(process.env.ALPACA_BEAR_KEY, process.env.ALPACA_BEAR_SECRET, 'BEAR');
+    const date = req.query.date || null;
+    await syncBracketExits(process.env.ALPACA_KEY, process.env.ALPACA_SECRET, 'BULL', date);
+    await syncBracketExits(process.env.ALPACA_BEAR_KEY, process.env.ALPACA_BEAR_SECRET, 'BEAR', date);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
