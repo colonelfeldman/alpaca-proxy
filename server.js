@@ -599,7 +599,7 @@ app.get('/schwab/callback', async (req, res) => {
 });
 
 async function schwabRefresh() {
-  if (!schwabTokens.refreshToken) { console.warn('Schwab: no refresh token — visit /schwab/auth'); return; }
+  if (!schwabTokens.refreshToken) return;
   try {
     const r = await fetch(`${SCHWAB_AUTH_BASE}/token`, {
       method: 'POST',
