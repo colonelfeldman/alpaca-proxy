@@ -929,7 +929,10 @@ async function seedAccount(key, secret) {
       if (!pendingEntryIds.has(order.id)) seenOrderIds.add(order.id);
       if (order.order_class === 'bracket') {
         for (const leg of (order.legs || [])) {
-          if (leg.id) exitToEntry[leg.id] = order.id;
+          if (leg.id) {
+            exitToEntry[leg.id] = order.id;
+            seenOrderIds.add(leg.id);
+          }
         }
       }
     }
