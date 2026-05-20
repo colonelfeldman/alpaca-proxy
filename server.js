@@ -1322,6 +1322,13 @@ app.post('/close-all', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/market-open-filter', async (req, res) => {
+  try {
+    const cancelled = await cancelStaleOpeningOrders();
+    res.json({ ok: true, cancelled });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/db/sync-exits', async (req, res) => {
   try {
     const date = req.query.date || null;
@@ -1342,25 +1349,112 @@ app.post('/settings/auto-close', (req, res) => {
   res.json({ ok: true, enabled: getSetting('autoCloseEnabled', false), time: getSetting('autoCloseTime', '15:45') });
 });
 
-let lastAutoCloseDate = null;
+// ── Market open filter ─────────────────────────────────────────────────────────
+// Runs at 9:30 AM ET and again at 9:35 ET. Cancels any pending stop-limit entry
+// orders where the market has already gapped through the trigger price:
+//   Bull entry: cancel if market price >= trigger (price already above, no clean breakout)
+//   SS entry:   cancel if market price <= trigger (price already below, already broken)
+
+async function cancelStaleOpeningOrders() {
+  const accounts = [
+    { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL' },
+    { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR' },
+  ].filter(a => a.key && a.secret);
+
+  let totalCancelled = 0;
+  const cancelMessages = [];
+
+  for (const acct of accounts) {
+    const headers = { 'APCA-API-KEY-ID': acct.key, 'APCA-API-SECRET-KEY': acct.secret };
+
+    const r = await fetch(`${ALPACA_BASE}/orders?status=open&limit=200`, { headers });
+    if (!r.ok) { console.error(`[OpenFilter][${acct.label}] order fetch failed: ${r.status}`); continue; }
+    const orders = await r.json();
+
+    // Only stop-limit entry orders (bracket or multi) that have a trigger price
+    const stopEntries = orders.filter(o =>
+      o.stop_price && parseFloat(o.stop_price) > 0 &&
+      (o.type === 'stop_limit' || o.type === 'stop')
+    );
+    if (!stopEntries.length) continue;
+
+    // Batch-fetch latest trade prices for all symbols
+    const symbols = [...new Set(stopEntries.map(o => o.symbol))];
+    const dataRes = await fetch(
+      `${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}`,
+      { headers: { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET } }
+    );
+    if (!dataRes.ok) { console.error(`[OpenFilter] price fetch failed: ${dataRes.status}`); continue; }
+    const priceData = await dataRes.json();
+
+    for (const order of stopEntries) {
+      const lastTrade = priceData.trades?.[order.symbol];
+      const currentPrice = lastTrade ? parseFloat(lastTrade.p) : null;
+      if (!currentPrice) { console.warn(`[OpenFilter] no price for ${order.symbol}`); continue; }
+
+      const trigger  = parseFloat(order.stop_price);
+      const isBull   = order.side === 'buy';
+      const shouldCancel = isBull ? currentPrice >= trigger : currentPrice <= trigger;
+
+      if (shouldCancel) {
+        try {
+          const del = await fetch(`${ALPACA_BASE}/orders/${order.id}`, { method: 'DELETE', headers });
+          if (del.ok || del.status === 204) {
+            totalCancelled++;
+            const dir = isBull ? '📈 Bull' : '📉 SS';
+            cancelMessages.push(`${dir} ${order.symbol}: trigger $${trigger} | open $${currentPrice.toFixed(2)}`);
+            try { db.prepare(`UPDATE trades SET status='cancelled' WHERE alpaca_order_id=?`).run(order.id); } catch(e) {}
+            console.log(`[OpenFilter][${acct.label}] cancelled ${order.symbol} — trigger $${trigger} vs $${currentPrice.toFixed(2)}`);
+          }
+        } catch(e) { console.error(`[OpenFilter][${acct.label}] cancel error ${order.symbol}: ${e.message}`); }
+      } else {
+        console.log(`[OpenFilter][${acct.label}] OK: ${order.symbol} trigger $${trigger} vs $${currentPrice.toFixed(2)}`);
+      }
+    }
+  }
+
+  if (cancelMessages.length) {
+    await sendTelegram([`🚫 Market open filter — ${totalCancelled} order(s) cancelled`, ...cancelMessages].join('\n')).catch(() => {});
+  } else {
+    console.log('[OpenFilter] All open orders valid at market open');
+  }
+  return totalCancelled;
+}
+
+let lastAutoCloseDate  = null;
+let lastOpenFilter930  = null;
+let lastOpenFilter935  = null;
 
 setInterval(() => {
-  const now = new Date();
+  const now     = new Date();
   const dateStr = now.toISOString().slice(0, 10);
+  const etNow   = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const isWeekday  = etNow.getDay() >= 1 && etNow.getDay() <= 5;
+  const etMinutes  = etNow.getHours() * 60 + etNow.getMinutes();
+
   if (now.getUTCHours() === 21 && now.getUTCMinutes() === 0 && lastSummaryDate !== dateStr) {
     lastSummaryDate = dateStr;
     syncPendingOrderStatuses();
     sendDailySummary();
   }
+
+  // Market open filter — 9:30 AM ET and re-check at 9:35 AM ET
+  if (isWeekday) {
+    if (etMinutes === 9 * 60 + 30 && lastOpenFilter930 !== dateStr) {
+      lastOpenFilter930 = dateStr;
+      cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:30]', e.message));
+    }
+    if (etMinutes === 9 * 60 + 35 && lastOpenFilter935 !== dateStr) {
+      lastOpenFilter935 = dateStr;
+      cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:35]', e.message));
+    }
+  }
+
   // Auto-close check — use >= window so a server restart near close time doesn't miss it
   if (getSetting('autoCloseEnabled', false) && lastAutoCloseDate !== dateStr) {
-    const closeTime = getSetting('autoCloseTime', '15:45');
-    const [h, m] = closeTime.split(':').map(Number);
-    const etNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const isWeekday = etNow.getDay() >= 1 && etNow.getDay() <= 5;
-    const etMinutes = etNow.getHours() * 60 + etNow.getMinutes();
+    const closeTime    = getSetting('autoCloseTime', '15:45');
+    const [h, m]       = closeTime.split(':').map(Number);
     const targetMinutes = h * 60 + m;
-    // Fire if we're within the target window (on or after close time, but before 4:00 PM)
     if (isWeekday && etMinutes >= targetMinutes && etMinutes < 16 * 60) {
       lastAutoCloseDate = dateStr;
       closeAllPositions('auto');
