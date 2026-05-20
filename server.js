@@ -452,7 +452,16 @@ app.post('/trade', async (req, res) => {
   const acctEmoji = label === 'BULL' ? '🟢' : '🔵';
   const apiHeaders = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret_key, 'Content-Type': 'application/json' };
 
-  // Save setup to DB — reject as duplicate if this exact setup was already placed today
+  // Reject if this symbol+direction+account was already traded today (catches race conditions
+  // and near-identical prices from multiple extension instances)
+  const existingTrade = db.prepare(
+    `SELECT id FROM trades WHERE date(created_at) = ? AND symbol = ? AND direction = ? AND account = ?`
+  ).get(dateET(), symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear');
+  if (existingTrade) {
+    return res.status(409).json({ error: 'Setup already traded today', alreadyTraded: true });
+  }
+
+  // Also guard via parsed_setups unique index (catches exact-price duplicates)
   try {
     db.prepare(`INSERT INTO parsed_setups (date,symbol,direction,trigger_price,target1,target2,target3,account) VALUES (?,?,?,?,?,?,?,?)`)
       .run(dateET(), symbol.toUpperCase(), direction, trigger, targets[0]||null, targets[1]||null, targets[2]||null, isBull?'bull':'bear');
@@ -907,7 +916,7 @@ async function recoverMultiTargetOrders() {
 async function seedAccount(key, secret) {
   if (!key || !secret) return;
   try {
-    const r = await fetch(`${ALPACA_BASE}/orders?status=filled&limit=50`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
+    const r = await fetch(`${ALPACA_BASE}/orders?status=filled&limit=50&nested=true`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
     if (!r.ok) return;
     const orders = await r.json();
     // Don't seed orders that are still pending exit placement — they need to be processed
@@ -918,6 +927,11 @@ async function seedAccount(key, secret) {
     );
     for (const order of orders) {
       if (!pendingEntryIds.has(order.id)) seenOrderIds.add(order.id);
+      if (order.order_class === 'bracket') {
+        for (const leg of (order.legs || [])) {
+          if (leg.id) exitToEntry[leg.id] = order.id;
+        }
+      }
     }
   } catch (e) { console.error('Seed error:', e.message); }
 }
@@ -1440,11 +1454,11 @@ setInterval(() => {
 
   // Market open filter — 9:30 AM ET and re-check at 9:35 AM ET
   if (isWeekday) {
-    if (etMinutes === 9 * 60 + 30 && lastOpenFilter930 !== dateStr) {
+    if (etMinutes >= 9 * 60 + 30 && etMinutes < 9 * 60 + 34 && lastOpenFilter930 !== dateStr) {
       lastOpenFilter930 = dateStr;
       cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:30]', e.message));
     }
-    if (etMinutes === 9 * 60 + 35 && lastOpenFilter935 !== dateStr) {
+    if (etMinutes >= 9 * 60 + 35 && etMinutes < 9 * 60 + 39 && lastOpenFilter935 !== dateStr) {
       lastOpenFilter935 = dateStr;
       cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:35]', e.message));
     }
