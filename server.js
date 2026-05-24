@@ -86,6 +86,31 @@ function nowETStr() {
   return new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
 }
 
+// ── Site auth (token-based) ────────────────────────────────────────────────────
+const SITE_PASSWORD = process.env.SITE_PASSWORD;
+
+function parseCookie(req, name) {
+  const header = req.headers.cookie || '';
+  const match = header.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+app.use((req, res, next) => {
+  if (!SITE_PASSWORD) return next(); // disabled if env var not set
+
+  // Valid token in query string → set 30-day cookie and redirect to clean URL
+  if (req.query.token === SITE_PASSWORD) {
+    res.setHeader('Set-Cookie', `st=${encodeURIComponent(SITE_PASSWORD)}; Path=/; Max-Age=${30*24*3600}; HttpOnly; SameSite=Lax`);
+    const rest = Object.entries(req.query).filter(([k]) => k !== 'token').map(([k,v]) => `${k}=${v}`).join('&');
+    return res.redirect(req.path + (rest ? '?' + rest : ''));
+  }
+
+  // Cookie present and valid → allow through
+  if (parseCookie(req, 'st') === SITE_PASSWORD) return next();
+
+  res.status(401).send('<h2 style="font-family:sans-serif;margin:2rem;">Access denied — append <code>?token=YOUR_PASSWORD</code> to the URL to log in.</h2>');
+});
+
 // ── Static files ───────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
 
