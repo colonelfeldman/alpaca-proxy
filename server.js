@@ -477,19 +477,25 @@ app.post('/trade', async (req, res) => {
     : Math.round(trigger * (1 + slPct) * 100) / 100;
   const tp = targets[0];
 
-  const acctEmoji = label === 'BULL' ? '🟢' : '🔵';
-  const apiHeaders = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret_key, 'Content-Type': 'application/json' };
+  // Bull → live account. Bear → paper account.
+  const useKey    = (isBull && hasLive) ? liveKey    : key;
+  const useSecret = (isBull && hasLive) ? liveSecret : secret_key;
+  const useBase   = (isBull && hasLive) ? ALPACA_LIVE_BASE : ALPACA_BASE;
+  const useEnv    = (isBull && hasLive) ? 'live' : 'paper';
+  const useAcct   = (isBull && hasLive) ? 'live' : (isBull ? 'bull' : 'bear');
+  const tgOpts    = (isBull && hasLive) ? { live: true } : {};
+  const useLabel  = (isBull && hasLive) ? '[LIVE] BULL' : label;
+  const useHeaders = { 'APCA-API-KEY-ID': useKey, 'APCA-API-SECRET-KEY': useSecret, 'Content-Type': 'application/json' };
 
-  // Reject if this symbol+direction+account was already traded today (catches race conditions
-  // and near-identical prices from multiple extension instances)
-  const existingTrade = db.prepare(
-    `SELECT id FROM trades WHERE date(created_at) = ? AND symbol = ? AND direction = ? AND account = ?`
-  ).get(dateET(), symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear');
+  // Dedup: for bull check live account, for bear check paper
+  const existingTrade = (isBull && hasLive)
+    ? db.prepare(`SELECT id FROM trades WHERE date(created_at) = ? AND symbol = ? AND direction = 'bull' AND environment = 'live'`).get(dateET(), symbol.toUpperCase())
+    : db.prepare(`SELECT id FROM trades WHERE date(created_at) = ? AND symbol = ? AND direction = ? AND account = ? AND (environment IS NULL OR environment = 'paper')`).get(dateET(), symbol.toUpperCase(), direction, 'bear');
   if (existingTrade) {
     return res.status(409).json({ error: 'Setup already traded today', alreadyTraded: true });
   }
 
-  // Also guard via parsed_setups unique index (catches exact-price duplicates)
+  // Guard via parsed_setups unique index (catches exact-price duplicates)
   try {
     db.prepare(`INSERT INTO parsed_setups (date,symbol,direction,trigger_price,target1,target2,target3,account) VALUES (?,?,?,?,?,?,?,?)`)
       .run(dateET(), symbol.toUpperCase(), direction, trigger, targets[0]||null, targets[1]||null, targets[2]||null, isBull?'bull':'bear');
@@ -507,58 +513,34 @@ app.post('/trade', async (req, res) => {
         type: 'stop_limit', stop_price: trigger, limit_price: trigger,
         time_in_force: 'day'
       };
-      const r = await fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers: apiHeaders, body: JSON.stringify(entryOrder) });
+      const r = await fetch(`${useBase}/orders`, { method: 'POST', headers: useHeaders, body: JSON.stringify(entryOrder) });
       const d = await r.json();
       if (!r.ok) {
         const reason = d.message || JSON.stringify(d);
-        console.error(`[${label}] Trade rejected: ${side} ${symbol} — ${reason}`);
-        await sendTelegram(`❌ ${label} | ${symbol} — Order rejected\n${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
+        console.error(`[${useLabel}] Trade rejected: ${side} ${symbol} — ${reason}`);
+        await sendTelegram(`❌ ${useLabel} | ${symbol} — Order rejected\n${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`, tgOpts);
         return res.status(r.status).json({ error: reason });
       }
       // 1 target → all shares at T1. 2 targets → 50/50 split. 3+ → 1/3 each with trailing stop.
       const t2 = targets.length >= 2 ? targets[1] : null;
       const trail = targets.length >= 3 ? (parseFloat(trailPct) || 1.5) : null;
       orderMetadata[d.id] = {
-        mode: 'multi', symbol: symbol.toUpperCase(), isBull, label,
+        mode: 'multi', symbol: symbol.toUpperCase(), isBull, label: useLabel,
         target1: tp, target2: t2, trailPct: trail, stopLossPrice: sl,
-        acct: isBull ? 'bull' : 'bear', status: 'pending_fill', exitOrderIds: null, qty
+        acct: useAcct, status: 'pending_fill', exitOrderIds: null, qty
       };
       saveOrderMetadata();
       try {
-        db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status) VALUES (?,?,?,?,?,?,?,?,?,?,'multi','pending') ON CONFLICT(alpaca_order_id) DO NOTHING`)
-          .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr());
+        db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment) VALUES (?,?,?,?,?,?,?,?,?,?,'multi','pending',?) ON CONFLICT(alpaca_order_id) DO NOTHING`)
+          .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr(), useEnv);
       } catch(e) { console.error('DB pending save error:', e.message); }
       const modeDesc = !t2
         ? `All ${qty} sh → $${tp}`
         : !trail
           ? `½ ${Math.floor(qty/2)} sh → $${tp}  ·  ½ ${qty - Math.floor(qty/2)} sh → $${t2}`
           : `⅓ ${Math.floor(qty/3)} sh → $${tp}  ·  ⅓ ${Math.floor(qty/3)} sh → $${t2}  ·  ⅓ Trail ${trail}%`;
-      console.log(`[${label}] Multi-target trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
-      await sendTelegram(`🟢 ${label} | ${symbol} — Multi-target placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\n${modeDesc}\nSL: $${sl}`);
-      // Mirror to live account (bull only)
-      if (hasLive) {
-        const liveDedup = db.prepare(`SELECT id FROM trades WHERE date(created_at)=? AND symbol=? AND direction='bull' AND account='bull' AND environment='live'`).get(dateET(), symbol.toUpperCase());
-        if (!liveDedup) {
-          try {
-            const lh = { 'APCA-API-KEY-ID': liveKey, 'APCA-API-SECRET-KEY': liveSecret, 'Content-Type': 'application/json' };
-            const lr = await fetch(`${ALPACA_LIVE_BASE}/orders`, { method: 'POST', headers: lh, body: JSON.stringify(entryOrder) });
-            const ld = await lr.json();
-            if (lr.ok) {
-              orderMetadata[ld.id] = { mode: 'multi', symbol: symbol.toUpperCase(), isBull: true, label: 'LIVE BULL', target1: tp, target2: t2, trailPct: trail, stopLossPrice: sl, acct: 'live', status: 'pending_fill', exitOrderIds: null, qty };
-              saveOrderMetadata();
-              try { db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment) VALUES (?,?,?,?,?,?,?,?,?,?,'multi','pending','live') ON CONFLICT(alpaca_order_id) DO NOTHING`).run(ld.id, symbol.toUpperCase(), direction, 'bull', trigger, qty, trigger * qty, tp, sl, nowETStr()); } catch(e) { console.error('Live DB save error:', e.message); }
-              await sendTelegram(`🟢 [LIVE] ${label} | ${symbol} — Multi-target placed\nStop-limit BUY ${qty} sh → trigger $${trigger}\n${modeDesc}\nSL: $${sl}`, { live: true });
-            } else {
-              const reason = ld.message || JSON.stringify(ld);
-              console.error(`[LIVE ${label}] Order rejected: ${reason}`);
-              await sendTelegram(`❌ [LIVE] ${label} | ${symbol} — Order rejected\nReason: ${reason}`, { live: true });
-            }
-          } catch(liveErr) {
-            console.error(`[LIVE] Multi-target placement error: ${liveErr.message}`);
-            await sendTelegram(`⚠️ [LIVE] Failed to place ${symbol}: ${liveErr.message}`, { live: true }).catch(() => {});
-          }
-        }
-      }
+      console.log(`[${useLabel}] Multi-target trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
+      await sendTelegram(`🟢 ${useLabel} | ${symbol} — Multi-target placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\n${modeDesc}\nSL: $${sl}`, tgOpts);
       return res.json({ ok: true, order: d, orderId: d.id });
     }
 
@@ -573,42 +555,20 @@ app.post('/trade', async (req, res) => {
         limit_price: Math.round(sl * (isBull ? 0.995 : 1.005) * 100) / 100
       }
     };
-    const r = await fetch(`${ALPACA_BASE}/orders`, { method: 'POST', headers: apiHeaders, body: JSON.stringify(order) });
+    const r = await fetch(`${useBase}/orders`, { method: 'POST', headers: useHeaders, body: JSON.stringify(order) });
     const d = await r.json();
     if (!r.ok) {
       const reason = d.message || JSON.stringify(d);
-      console.error(`[${label}] Trade rejected: ${side} ${symbol} — ${reason}`);
-      await sendTelegram(`❌ ${label} | ${symbol} — Order rejected\n${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`);
+      console.error(`[${useLabel}] Trade rejected: ${side} ${symbol} — ${reason}`);
+      await sendTelegram(`❌ ${useLabel} | ${symbol} — Order rejected\n${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`, tgOpts);
       return res.status(r.status).json({ error: reason });
     }
     try {
-      db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status) VALUES (?,?,?,?,?,?,?,?,?,?,'bracket','pending') ON CONFLICT(alpaca_order_id) DO NOTHING`)
-        .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr());
+      db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment) VALUES (?,?,?,?,?,?,?,?,?,?,'bracket','pending',?) ON CONFLICT(alpaca_order_id) DO NOTHING`)
+        .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr(), useEnv);
     } catch(e) { console.error('DB pending save error:', e.message); }
-    console.log(`[${label}] Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
-    await sendTelegram(`🟢 ${label} | ${symbol} — Bracket placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\nTP: $${tp}  ·  SL: $${sl}`);
-    // Mirror to live account (bull only)
-    if (hasLive) {
-      const liveDedup = db.prepare(`SELECT id FROM trades WHERE date(created_at)=? AND symbol=? AND direction='bull' AND account='bull' AND environment='live'`).get(dateET(), symbol.toUpperCase());
-      if (!liveDedup) {
-        try {
-          const lh = { 'APCA-API-KEY-ID': liveKey, 'APCA-API-SECRET-KEY': liveSecret, 'Content-Type': 'application/json' };
-          const lr = await fetch(`${ALPACA_LIVE_BASE}/orders`, { method: 'POST', headers: lh, body: JSON.stringify(order) });
-          const ld = await lr.json();
-          if (lr.ok) {
-            try { db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment) VALUES (?,?,?,?,?,?,?,?,?,?,'bracket','pending','live') ON CONFLICT(alpaca_order_id) DO NOTHING`).run(ld.id, symbol.toUpperCase(), direction, 'bull', trigger, qty, trigger * qty, tp, sl, nowETStr()); } catch(e) { console.error('Live DB save error:', e.message); }
-            await sendTelegram(`🟢 [LIVE] ${label} | ${symbol} — Bracket placed\nStop-limit BUY ${qty} sh → trigger $${trigger}\nTP: $${tp}  ·  SL: $${sl}`, { live: true });
-          } else {
-            const reason = ld.message || JSON.stringify(ld);
-            console.error(`[LIVE ${label}] Order rejected: ${reason}`);
-            await sendTelegram(`❌ [LIVE] ${label} | ${symbol} — Order rejected\nReason: ${reason}`, { live: true });
-          }
-        } catch(liveErr) {
-          console.error(`[LIVE] Bracket placement error: ${liveErr.message}`);
-          await sendTelegram(`⚠️ [LIVE] Failed to place ${symbol}: ${liveErr.message}`, { live: true }).catch(() => {});
-        }
-      }
-    }
+    console.log(`[${useLabel}] Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
+    await sendTelegram(`🟢 ${useLabel} | ${symbol} — Bracket placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\nTP: $${tp}  ·  SL: $${sl}`, tgOpts);
     res.json({ ok: true, order: d });
   } catch (e) {
     res.status(500).json({ error: e.message });
