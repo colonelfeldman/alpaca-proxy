@@ -616,7 +616,7 @@ button{cursor:pointer;font-family:var(--font);}
         <div id="setups-list"></div>
       </div>
       <div class="action-bar" id="wl-action-bar">
-        <button class="btn btn-primary" onclick="placeAllOrders()" id="btn-place-all">Place all bracket orders</button>
+        <button class="btn btn-primary" onclick="placeAllOrders()" id="btn-place-all">Place all orders (bull→Live, bear→Paper)</button>
       </div>
       <div id="place-all-msg"></div>
     </div>
@@ -1574,14 +1574,20 @@ function renderSetups() {
     const sb = s.status==='placed'?'badge-active':s.status==='error'?'badge-loss':'badge-pending';
     const sl2 = s.status==='placed'?'✓ Placed':s.status==='error'?'✗ Error':'Pending';
     const show = s.status !== 'placed' && wlMode === 'manual';
+    const acctLabel = s.direction === 'bull'
+      ? '<span style="font-size:10px;color:var(--red);font-weight:600;font-family:var(--mono);">🔴 Live</span>'
+      : '<span style="font-size:10px;color:var(--muted);font-weight:600;font-family:var(--mono);">Paper</span>';
     return `<div class="setup-row ${s.status==='placed'?'placed-row':''}">
       <span class="symbol">${s.symbol}</span>
-      <span class="badge ${s.direction==='bull'?'badge-bull':'badge-bear'}">${s.direction==='bull'?'▲ Bull':'▼ Bear'}</span>
+      <div style="display:flex;flex-direction:column;gap:3px;">
+        <span class="badge ${s.direction==='bull'?'badge-bull':'badge-bear'}">${s.direction==='bull'?'▲ Bull':'▼ Bear'}</span>
+        ${acctLabel}
+      </div>
       <span class="detail">@ $${s.trigger}<br/><span class="tgt">TP $${s.targets[0]}</span> · <span class="sl">SL $${sl}</span></span>
       <span class="badge ${sb}">${sl2}</span>
       ${show
         ? `<div style="display:flex;gap:5px;flex-wrap:wrap;">
-            <button class="btn-success btn-sm" onclick="placeSingle(${i})">Alpaca</button>
+            <button class="btn-success btn-sm" onclick="placeSingle(${i})">${s.direction==='bull'?'Place Live':'Place Paper'}</button>
             <button class="btn-danger btn-sm" onclick="removeSetup(${i})">✕</button>
           </div>`
         : '<span></span>'}
@@ -1638,7 +1644,7 @@ async function placeAllOrders() {
     renderSetups();
     await new Promise(r=>setTimeout(r,300));
   }
-  if (btn) { btn.disabled=false; btn.textContent=orderMode==='multi'?'Place all multi-target orders':'Place all bracket orders'; }
+  if (btn) { btn.disabled=false; btn.textContent='Place all orders (bull→Live, bear→Paper)'; }
   msg.innerHTML = fail===0
     ? '<div class="msg msg-ok">✓ '+ok+' orders placed</div>'
     : '<div class="msg msg-err">'+ok+' placed, '+fail+' failed</div>';
