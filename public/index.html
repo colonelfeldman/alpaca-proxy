@@ -303,11 +303,12 @@ button{cursor:pointer;font-family:var(--font);}
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media(max-width:767px){
+  /* ── Existing ── */
   .metrics{grid-template-columns:1fr 1fr;}
   .cards-grid{grid-template-columns:1fr;}
   .sum-metrics{grid-template-columns:1fr 1fr;}
   .sum-two-col{grid-template-columns:1fr;}
-  .nav-tab{font-size:12px;padding:0 10px;}
+  .nav-tab{font-size:11px;padding:0 8px;}
   .nav-brand{display:none;}
   button{min-height:44px;}
   .btn-sm{min-height:36px;}
@@ -326,6 +327,66 @@ button{cursor:pointer;font-family:var(--font);}
   .side-cards{grid-template-columns:1fr;}
   .date-range{gap:3px;}
   .dr-btn{padding:5px 8px;font-size:11px;}
+
+  /* ── Nav ── */
+  .pill-paper{display:none;}
+
+  /* ── Metrics ── */
+  .metric{padding:1rem;}
+  .metric-val{font-size:22px;}
+
+  /* ── Dashboard table → stacked cards ── */
+  .trades-table thead{display:none;}
+  .trades-table,.trades-table tbody{display:block;width:100%;}
+
+  /* Each data row becomes a 2-column grid card */
+  .trades-table tr[data-view]{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    border:1px solid var(--border);
+    border-radius:10px;
+    margin-bottom:8px;
+    background:var(--surface);
+    overflow:hidden;
+  }
+  /* When close panel is open, flatten the bottom corners */
+  .trades-table tr[data-view].close-is-open{
+    border-radius:10px 10px 0 0;
+    margin-bottom:0;
+  }
+  /* All data-row cells: block, no bottom border */
+  .trades-table tr[data-view] td{display:block;border-bottom:none;padding:0;}
+
+  /* Row 1 — Symbol (left) + Dir badge (right) */
+  .trades-table tr[data-view] td:nth-child(1){grid-column:1;grid-row:1;padding:14px 12px 6px;}
+  .trades-table tr[data-view] td:nth-child(2){grid-column:2;grid-row:1;padding:14px 12px 6px;display:flex;align-items:flex-start;justify-content:flex-end;}
+
+  /* Row 2 — Entry (left) + Current (right) */
+  .trades-table tr[data-view] td:nth-child(3){grid-column:1;grid-row:2;padding:4px 12px;}
+  .trades-table tr[data-view] td:nth-child(4){grid-column:2;grid-row:2;padding:4px 12px;text-align:right;}
+
+  /* Row 3 — Target/SL full width */
+  .trades-table tr[data-view] td:nth-child(5){grid-column:1/-1;grid-row:3;padding:6px 12px;border-top:1px solid var(--border);}
+
+  /* Hide Size column */
+  .trades-table tr[data-view] td:nth-child(6){display:none;}
+
+  /* Row 4 — P&L (left) + Progress bar (right) */
+  .trades-table tr[data-view] td:nth-child(7){grid-column:1;grid-row:4;padding:8px 12px;border-top:1px solid var(--border);}
+  .trades-table tr[data-view] td:nth-child(8){grid-column:2;grid-row:4;padding:8px 12px;border-top:1px solid var(--border);}
+  .trades-table tr[data-view] td:nth-child(8) .t-bar-wrap{min-width:unset;width:100%;}
+
+  /* Row 5 — Status (left) + Action button (right) */
+  .trades-table tr[data-view] td:nth-child(9){grid-column:1;grid-row:5;padding:10px 12px;border-top:1px solid var(--border);display:flex;align-items:center;}
+  .trades-table tr[data-view] td:nth-child(10){grid-column:2;grid-row:5;padding:10px 12px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:flex-end;}
+
+  /* Close panel row — attaches flush below the card */
+  .trades-table tr[data-close-row]{display:block;border:1px solid var(--border);border-top:none;border-radius:0 0 10px 10px;margin-bottom:8px;background:#0f0f17;}
+  .trades-table tr[data-close-row] td{display:block;padding:0 12px 14px!important;}
+  .close-options{flex-wrap:wrap;gap:8px;}
+
+  /* Dash controls */
+  .dash-tab-row{flex-wrap:wrap;gap:8px;padding-bottom:8px;}
 }
 @media(min-width:768px){
   textarea{font-size:13px;}
@@ -799,6 +860,7 @@ function setDashView(v) {
   document.getElementById('tab-open').classList.toggle('active', v === 'open');
   document.getElementById('tab-closed').classList.toggle('active', v === 'closed');
   document.querySelectorAll('#dash-tbody tr[data-close-row]').forEach(tr => tr.style.display = 'none');
+  document.querySelectorAll('#dash-tbody tr[data-view]').forEach(tr => tr.classList.remove('close-is-open'));
   document.querySelectorAll('#dash-tbody tr[data-view]').forEach(tr => {
     tr.style.display = tr.dataset.view === v ? '' : 'none';
   });
@@ -999,7 +1061,9 @@ function buildSparkline(symbolBars, current) {
 function toggleCloseRow(domKey) {
   const row = document.getElementById('close-row-'+domKey);
   if (!row) return;
-  row.style.display = row.style.display === 'none' ? '' : 'none';
+  const opening = row.style.display === 'none';
+  row.style.display = opening ? '' : 'none';
+  row.previousElementSibling?.classList.toggle('close-is-open', opening);
 }
 async function submitMarketCloseInline(symbol, acct, domKey) {
   if (!confirm(`Close ${symbol} at market?`)) return;
