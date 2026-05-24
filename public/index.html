@@ -300,6 +300,7 @@ button{cursor:pointer;font-family:var(--font);}
 .btn-x-sm{background:transparent;border:1px solid var(--border);color:var(--muted);font-size:12px;border-radius:6px;padding:6px 10px;cursor:pointer;}
 .lmt-input{width:90px;background:#1a1a24;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 8px;font-size:12px;font-family:var(--mono);}
 .spark-wrap{margin:5px 0 3px;line-height:0;}
+.m-status{display:none;}
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media(max-width:767px){
@@ -357,28 +358,28 @@ button{cursor:pointer;font-family:var(--font);}
   /* All data-row cells: block, no bottom border */
   .trades-table tr[data-view] td{display:block;border-bottom:none;padding:0;}
 
-  /* Row 1 — Symbol (left) + Dir badge (right) */
+  /* Row 1 — Symbol + status badge (left) | Dir badge (right) */
   .trades-table tr[data-view] td:nth-child(1){grid-column:1;grid-row:1;padding:14px 12px 6px;}
   .trades-table tr[data-view] td:nth-child(2){grid-column:2;grid-row:1;padding:14px 12px 6px;display:flex;align-items:flex-start;justify-content:flex-end;}
+  .m-status{display:inline-block;}
 
-  /* Row 2 — Entry (left) + Current (right) */
+  /* Row 2 — Entry (left) | Target/SL (right, with divider) */
   .trades-table tr[data-view] td:nth-child(3){grid-column:1;grid-row:2;padding:4px 12px;}
-  .trades-table tr[data-view] td:nth-child(4){grid-column:2;grid-row:2;padding:4px 12px;text-align:right;}
-
-  /* Row 3 — Target/SL full width */
-  .trades-table tr[data-view] td:nth-child(5){grid-column:1/-1;grid-row:3;padding:6px 12px;border-top:1px solid var(--border);}
+  .trades-table tr[data-view] td:nth-child(4){display:none;}
+  .trades-table tr[data-view] td:nth-child(5){grid-column:2;grid-row:2;padding:4px 12px;border-left:1px solid var(--border);font-size:11px;}
 
   /* Hide Size column */
   .trades-table tr[data-view] td:nth-child(6){display:none;}
 
-  /* Row 4 — P&L (left) + Progress bar (right) */
-  .trades-table tr[data-view] td:nth-child(7){grid-column:1;grid-row:4;padding:8px 12px;border-top:1px solid var(--border);}
-  .trades-table tr[data-view] td:nth-child(8){grid-column:2;grid-row:4;padding:8px 12px;border-top:1px solid var(--border);}
+  /* Row 3 — P&L (left) | Progress bar (right, with divider) */
+  .trades-table tr[data-view] td:nth-child(7){grid-column:1;grid-row:3;padding:8px 12px;border-top:1px solid var(--border);}
+  .trades-table tr[data-view] td:nth-child(8){grid-column:2;grid-row:3;padding:8px 12px;border-top:1px solid var(--border);border-left:1px solid var(--border);}
   .trades-table tr[data-view] td:nth-child(8) .t-bar-wrap{min-width:unset;width:100%;}
 
-  /* Row 5 — Status (left) + Action button (right) */
-  .trades-table tr[data-view] td:nth-child(9){grid-column:1;grid-row:5;padding:10px 12px;border-top:1px solid var(--border);display:flex;align-items:center;}
-  .trades-table tr[data-view] td:nth-child(10){grid-column:2;grid-row:5;padding:10px 12px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:flex-end;}
+  /* Status cell — hidden (badge shown inline in symbol cell via .m-status) */
+  .trades-table tr[data-view] td:nth-child(9){display:none;}
+  /* Row 4 — Action button full width */
+  .trades-table tr[data-view] td:nth-child(10){grid-column:1/-1;grid-row:4;padding:10px 12px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:flex-end;}
 
   /* Close panel row — attaches flush below the card */
   .trades-table tr[data-close-row]{display:block;border:1px solid var(--border);border-top:none;border-radius:0 0 10px 10px;margin-bottom:8px;background:#0f0f17;}
@@ -1162,7 +1163,7 @@ function buildTradeRow(key, posMap, byKey, snaps, serverMeta, bars={}) {
                     slPrice ? `<span style="color:var(--red)">SL ${fmt(slPrice)}</span>` : ''].filter(Boolean).join(' <span style="color:var(--muted);">/</span> ') || '—';
     const lmtDefault = t1 ? t1.toFixed(2) : current ? current.toFixed(2) : '';
     return `<tr data-view="open" data-dir="${isBull?'bull':'bear'}">
-      <td><div class="t-sym">${symbol}</div>${sparkline}<div class="t-sub">${acctLabel} · ${fmtTime(entryOrd?.filled_at)}</div></td>
+      <td><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;"><div class="t-sym">${symbol}</div><span class="m-status status-open">Open</span></div>${sparkline}<div class="t-sub">${acctLabel} · ${fmtTime(entryOrd?.filled_at)}</div></td>
       <td>${dirBadge}</td>
       <td><div class="t-price">${fmt(entry)}</div><div class="t-sub">${qty} sh</div></td>
       <td><div class="t-price">${current ? fmt(current) : '—'}</div></td>
@@ -1195,7 +1196,7 @@ function buildTradeRow(key, posMap, byKey, snaps, serverMeta, bars={}) {
     const tpSl     = [t1 ? `<span style="color:var(--green)">T ${fmt(t1)}</span>` : '',
                       slPrice ? `<span style="color:var(--red)">SL ${fmt(slPrice)}</span>` : ''].filter(Boolean).join(' <span style="color:var(--muted);">/</span> ') || '—';
     return `<tr data-view="open" data-dir="${isBull?'bull':'bear'}">
-      <td><div class="t-sym">${symbol}</div>${sparkline}<div class="t-sub">${acctLabel}</div></td>
+      <td><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;"><div class="t-sym">${symbol}</div><span class="m-status status-pending">Pending</span></div>${sparkline}<div class="t-sub">${acctLabel}</div></td>
       <td>${dirBadge}</td>
       <td><div class="t-price">${fmt(trigger)}</div><div class="t-sub">${qty} sh · trigger${distance ? ' · ' + fmt(distance) + ' away' : ''}</div></td>
       <td><div class="t-price">${current ? fmt(current) : '—'}</div></td>
@@ -1231,7 +1232,7 @@ function buildTradeRow(key, posMap, byKey, snaps, serverMeta, bars={}) {
           ? `<span class="status-win">Win</span>`
           : `<span class="status-loss">Loss</span>`;
     return `<tr data-view="closed" data-dir="${isBull?'bull':'bear'}">
-      <td><div class="t-sym">${symbol}</div>${sparkline}<div class="t-sub">${acctLabel}</div></td>
+      <td><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;"><div class="t-sym">${symbol}</div>${statusBadge.replace(/class="status-/g,'class="m-status status-')}</div>${sparkline}<div class="t-sub">${acctLabel}</div></td>
       <td>${dirBadge}</td>
       <td><div class="t-price">${entryPrice ? fmt(entryPrice) : '—'}</div><div class="t-sub">${qty} sh</div></td>
       <td><div class="t-price">${exitPrice ? fmt(exitPrice) : '—'}</div><div class="t-sub" style="color:${exitVia==='T1'?'var(--green)':'var(--red)'};">${exitVia}</div></td>
