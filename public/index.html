@@ -362,6 +362,7 @@ button{cursor:pointer;font-family:var(--font);}
   <div class="nav-brand">⬡ Trading Agent</div>
   <div class="nav-tabs">
     <button class="nav-tab active" id="tab-dashboard" onclick="showTab('dashboard')">Dashboard</button>
+    <button class="nav-tab" id="tab-live" onclick="showTab('live')">Live 🔴</button>
     <button class="nav-tab" id="tab-summary" onclick="showTab('summary')">Summary</button>
     <button class="nav-tab" id="tab-watchlist" onclick="showTab('watchlist')">Watchlist</button>
     <button class="nav-tab" id="tab-orders" onclick="showTab('orders')">Orders</button>
@@ -421,6 +422,44 @@ button{cursor:pointer;font-family:var(--font);}
       <button class="btn-refresh" onclick="refreshDashboard()">↻ Refresh</button>
     </div>
     <div class="cards-grid" id="dash-cards">
+      <div class="empty" style="grid-column:1/-1;">Loading...</div>
+    </div>
+  </div>
+
+  <!-- LIVE TAB -->
+  <div id="content-live" style="display:none;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;">
+      <span style="font-size:13px;font-weight:600;color:var(--red);">🔴 LIVE ACCOUNT</span>
+      <span style="font-size:11px;color:var(--muted);font-family:var(--mono);">Real money — bull trades only</span>
+    </div>
+    <!-- Live metrics -->
+    <div class="metrics" style="margin-bottom:1.25rem;">
+      <div class="metric">
+        <div class="metric-label">Portfolio</div>
+        <div class="metric-val" id="lm-portfolio" style="color:var(--cyan);">—</div>
+        <div class="metric-sub">Live account</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Buying Power</div>
+        <div class="metric-val" id="lm-bp" style="color:var(--cyan);">—</div>
+        <div class="metric-sub">Available</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Unrealized P&amp;L</div>
+        <div class="metric-val" id="lm-pnl">—</div>
+        <div class="metric-sub">Today</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Open / Total</div>
+        <div class="metric-val" id="lm-trades">—</div>
+        <div class="metric-sub">Positions / orders today</div>
+      </div>
+    </div>
+    <div class="control-row">
+      <input type="date" id="live-date" onchange="refreshLive()"/>
+      <button class="btn-refresh" onclick="refreshLive()">↻ Refresh</button>
+    </div>
+    <div class="cards-grid" id="live-cards">
       <div class="empty" style="grid-column:1/-1;">Loading...</div>
     </div>
   </div>
@@ -628,13 +667,14 @@ function closeSettings() { document.getElementById('settingsPanel').classList.re
 
 // ── Nav / Tab ──────────────────────────────────────────────────────────────────
 function showTab(t) {
-  ['dashboard','summary','watchlist','orders'].forEach(id => {
+  ['dashboard','live','summary','watchlist','orders'].forEach(id => {
     document.getElementById('content-'+id).style.display = id === t ? '' : 'none';
     document.getElementById('tab-'+id).classList.toggle('active', id === t);
   });
   activeTab = t;
   localStorage.setItem('activeTab', t);
   if (t === 'dashboard') refreshDashboard();
+  if (t === 'live')      refreshLive();
   if (t === 'summary')   loadSummary();
   if (t === 'orders')    refreshOrders();
 }
@@ -752,6 +792,105 @@ async function refreshDashboard() {
 
     // Store card data for close panels
     filterDashCards();
+  } catch(e) { el.innerHTML = `<div class="msg msg-err" style="grid-column:1/-1;">${e.message}</div>`; }
+}
+
+// ── Live Account ───────────────────────────────────────────────────────────────
+async function refreshLive() {
+  const el = document.getElementById('live-cards');
+  el.innerHTML = '<div class="empty" style="grid-column:1/-1;"><span class="spinner"></span>Loading...</div>';
+
+  const dateVal = document.getElementById('live-date').value || todayET();
+
+  try {
+    // Fetch live account info + positions + DB trades in parallel
+    const [acctRes, posRes, dbRes] = await Promise.all([
+      fetch('/alpaca-live/account'),
+      fetch('/alpaca-live/positions'),
+      fetch(`/db/trades?date=${dateVal}&environment=live`)
+    ]);
+
+    if (!acctRes.ok) {
+      el.innerHTML = '<div class="empty" style="grid-column:1/-1;color:var(--red);">Live account not configured — add ALPACA_LIVE_KEY and ALPACA_LIVE_SECRET to Railway env vars</div>';
+      return;
+    }
+
+    const acct  = await acctRes.json();
+    const pos   = posRes.ok ? await posRes.json() : [];
+    const trades = dbRes.ok ? await dbRes.json() : [];
+
+    // Update live metrics
+    if (acct && !acct.error) {
+      document.getElementById('lm-portfolio').textContent = fmt(acct.portfolio_value);
+      document.getElementById('lm-bp').textContent = fmt(acct.buying_power);
+      const pnl = parseFloat(acct.unrealized_pl || 0);
+      const pnlEl = document.getElementById('lm-pnl');
+      pnlEl.textContent = (pnl >= 0 ? '+' : '') + fmt(pnl);
+      pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      document.getElementById('lm-trades').textContent = (Array.isArray(pos) ? pos.length : 0) + ' / ' + trades.length;
+    }
+
+    if (!trades.length && (!Array.isArray(pos) || !pos.length)) {
+      el.innerHTML = '<div class="empty" style="grid-column:1/-1;">No live trades for this date</div>';
+      return;
+    }
+
+    // Build simple trade cards for live trades
+    const posMap = {};
+    if (Array.isArray(pos)) pos.forEach(p => { posMap[p.symbol] = p; });
+
+    const rows = trades.map(t => {
+      const p = posMap[t.symbol];
+      const isOpen = t.status === 'filled' && !t.exit_reason;
+      const isPending = t.status === 'pending';
+      const isClosed = !!t.exit_reason;
+      const unrPnl = p ? parseFloat(p.unrealized_pl || 0) : null;
+      const statusBadge = isPending
+        ? `<span class="badge badge-pending">Pending</span>`
+        : isOpen
+          ? `<span class="badge badge-active">Open</span>`
+          : `<span class="badge badge-closed">${t.exit_reason || 'Closed'}</span>`;
+      const pnlBadge = t.total_pnl != null
+        ? `<span class="badge ${t.total_pnl >= 0 ? 'badge-win' : 'badge-loss'}">${t.total_pnl >= 0 ? '+' : ''}$${Math.abs(t.total_pnl).toFixed(2)}</span>`
+        : unrPnl != null
+          ? `<span class="badge ${unrPnl >= 0 ? 'badge-win' : 'badge-loss'}">${unrPnl >= 0 ? '+' : ''}$${Math.abs(unrPnl).toFixed(2)}</span>`
+          : '';
+      const priceDisplay = t.exit_reason
+        ? `$${(t.total_pnl != null && t.shares ? (t.entry_price + t.total_pnl / t.shares) : 0).toFixed(2)}`
+        : p
+          ? `$${parseFloat(p.current_price).toFixed(2)}`
+          : `$${(t.entry_price || 0).toFixed(2)}`;
+
+      return `<div class="trade-card bull" style="border-color:rgba(248,113,113,.5);">
+        <div class="card-inner">
+          <div class="card-head">
+            <div>
+              <div class="card-sym">${t.symbol}</div>
+              <div class="card-badges">
+                <span class="badge badge-bull">LIVE BULL</span>
+                ${statusBadge}
+                ${pnlBadge}
+              </div>
+            </div>
+            <div class="card-price">
+              <div class="card-price-val">${priceDisplay}</div>
+              <div class="card-pnl" style="color:var(--muted);">entry $${(t.entry_price||0).toFixed(2)}</div>
+            </div>
+          </div>
+          <div class="card-stats">
+            <div>Shares <span>${t.shares || '—'}</span></div>
+            <div>Size <span>$${(t.dollar_amount||0).toFixed(0)}</span></div>
+            ${t.t1_price ? `<div>TP <span style="color:var(--green);">$${t.t1_price.toFixed(2)}</span></div>` : ''}
+            ${t.stop_loss_price ? `<div>SL <span style="color:var(--red);">$${t.stop_loss_price.toFixed(2)}</span></div>` : ''}
+            ${t.hold_minutes ? `<div>Hold <span>${Math.round(t.hold_minutes)}m</span></div>` : ''}
+          </div>
+          ${t.entry_time_et ? `<div style="font-size:11px;color:var(--muted);font-family:var(--mono);">${t.entry_time_et}</div>` : ''}
+        </div>
+        ${isClosed && t.total_pnl != null ? `<div class="pnl-banner ${t.total_pnl >= 0 ? 'win' : 'loss'}"><span>${t.exit_reason}</span><span>${t.total_pnl >= 0 ? '+' : ''}$${t.total_pnl.toFixed(2)} (${t.total_pct != null ? (t.total_pct >= 0 ? '+' : '') + t.total_pct.toFixed(2) + '%' : ''})</span></div>` : ''}
+      </div>`;
+    });
+
+    el.innerHTML = rows.join('') || '<div class="empty" style="grid-column:1/-1;">No trades found</div>';
   } catch(e) { el.innerHTML = `<div class="msg msg-err" style="grid-column:1/-1;">${e.message}</div>`; }
 }
 
@@ -1590,6 +1729,7 @@ async function loadAutoCloseSettings() {
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 document.getElementById('dash-date').value = todayET();
+document.getElementById('live-date').value = todayET();
 const savedSumDate = localStorage.getItem('sumDate');
 if (savedSumDate) {
   sumDate = savedSumDate;

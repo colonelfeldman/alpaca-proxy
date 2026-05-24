@@ -17,6 +17,10 @@ const ALPACA_DATA_BASE = 'https://data.alpaca.markets/v2';
 const TELEGRAM_TOKEN = '8537812125:AAGQDJEDEp8E9ewfpiBk3kL7hKqCY2dWIyQ';
 const TELEGRAM_CHAT_ID = 8018343254;
 
+const ALPACA_LIVE_BASE      = 'https://api.alpaca.markets/v2';
+const TELEGRAM_LIVE_TOKEN   = process.env.TELEGRAM_LIVE_TOKEN  || null;
+const TELEGRAM_LIVE_CHAT_ID = process.env.TELEGRAM_LIVE_CHAT_ID ? parseInt(process.env.TELEGRAM_LIVE_CHAT_ID) : null;
+
 // ── SQLite Database ────────────────────────────────────────────────────────────
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'trading.db');
 const db = new Database(DB_PATH);
@@ -65,6 +69,7 @@ try { db.exec(`ALTER TABLE trades ADD COLUMN status TEXT DEFAULT 'pending'`); } 
 try { db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`); } catch(e) {}
 // Prevents two extension instances from placing the same setup twice on the same day
 try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_setup_daily ON parsed_setups(date, symbol, direction, trigger_price)`); } catch(e) {}
+try { db.exec(`ALTER TABLE trades ADD COLUMN environment TEXT DEFAULT 'paper'`); } catch(e) {}
 
 function getSetting(key, defaultVal) {
   const row = db.prepare('SELECT value FROM settings WHERE key=?').get(key);
@@ -119,6 +124,20 @@ app.all('/alpaca-bear/*', async (req, res) => {
   const key = process.env.ALPACA_BEAR_KEY;
   const secret = process.env.ALPACA_BEAR_SECRET;
   if (!key || !secret) return res.status(500).json({ error: 'ALPACA_BEAR_KEY not configured on server' });
+  try {
+    const r = await fetch(url, { method: req.method, headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret, 'Content-Type': 'application/json' }, body: req.method !== 'GET' && req.method !== 'DELETE' ? JSON.stringify(req.body) : undefined });
+    const d = await r.json();
+    res.status(r.status).json(d);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Live account proxy ─────────────────────────────────────────────────────────
+app.all('/alpaca-live/*', async (req, res) => {
+  const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  const url = ALPACA_LIVE_BASE + '/' + req.params[0] + qs;
+  const key = process.env.ALPACA_LIVE_KEY;
+  const secret = process.env.ALPACA_LIVE_SECRET;
+  if (!key || !secret) return res.status(500).json({ error: 'ALPACA_LIVE_KEY not configured on server' });
   try {
     const r = await fetch(url, { method: req.method, headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret, 'Content-Type': 'application/json' }, body: req.method !== 'GET' && req.method !== 'DELETE' ? JSON.stringify(req.body) : undefined });
     const d = await r.json();
@@ -293,9 +312,15 @@ app.get('/db/trades', (req, res) => {
   try {
     const date = req.query.date || dateET();
     const account = req.query.account;
+    const environment = req.query.environment;
     const params = [date];
     let q = `SELECT * FROM trades WHERE date(created_at) = ?`;
     if (account && account !== 'all') { q += ` AND account = ?`; params.push(account); }
+    if (environment === 'live') {
+      q += ` AND environment = 'live'`;
+    } else if (environment === 'paper') {
+      q += ` AND (environment IS NULL OR environment = 'paper')`;
+    }
     q += ` ORDER BY created_at DESC`;
     res.json(db.prepare(q).all(...params));
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -434,6 +459,9 @@ app.post('/trade', async (req, res) => {
   const label = isBull ? 'BULL' : 'BEAR';
   const key = isBull ? process.env.ALPACA_KEY : process.env.ALPACA_BEAR_KEY;
   const secret_key = isBull ? process.env.ALPACA_SECRET : process.env.ALPACA_BEAR_SECRET;
+  const liveKey    = isBull ? process.env.ALPACA_LIVE_KEY    : null;
+  const liveSecret = isBull ? process.env.ALPACA_LIVE_SECRET : null;
+  let hasLive = !!(isBull && liveKey && liveSecret);
 
   if (!key || !secret_key) {
     const missing = isBull ? 'ALPACA_KEY / ALPACA_SECRET' : 'ALPACA_BEAR_KEY / ALPACA_BEAR_SECRET';
@@ -507,6 +535,30 @@ app.post('/trade', async (req, res) => {
           : `⅓ ${Math.floor(qty/3)} sh → $${tp}  ·  ⅓ ${Math.floor(qty/3)} sh → $${t2}  ·  ⅓ Trail ${trail}%`;
       console.log(`[${label}] Multi-target trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
       await sendTelegram(`🟢 ${label} | ${symbol} — Multi-target placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\n${modeDesc}\nSL: $${sl}`);
+      // Mirror to live account (bull only)
+      if (hasLive) {
+        const liveDedup = db.prepare(`SELECT id FROM trades WHERE date(created_at)=? AND symbol=? AND direction='bull' AND account='bull' AND environment='live'`).get(dateET(), symbol.toUpperCase());
+        if (!liveDedup) {
+          try {
+            const lh = { 'APCA-API-KEY-ID': liveKey, 'APCA-API-SECRET-KEY': liveSecret, 'Content-Type': 'application/json' };
+            const lr = await fetch(`${ALPACA_LIVE_BASE}/orders`, { method: 'POST', headers: lh, body: JSON.stringify(entryOrder) });
+            const ld = await lr.json();
+            if (lr.ok) {
+              orderMetadata[ld.id] = { mode: 'multi', symbol: symbol.toUpperCase(), isBull: true, label: 'LIVE BULL', target1: tp, target2: t2, trailPct: trail, stopLossPrice: sl, acct: 'live', status: 'pending_fill', exitOrderIds: null, qty };
+              saveOrderMetadata();
+              try { db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment) VALUES (?,?,?,?,?,?,?,?,?,?,'multi','pending','live') ON CONFLICT(alpaca_order_id) DO NOTHING`).run(ld.id, symbol.toUpperCase(), direction, 'bull', trigger, qty, trigger * qty, tp, sl, nowETStr()); } catch(e) { console.error('Live DB save error:', e.message); }
+              await sendTelegram(`🟢 [LIVE] ${label} | ${symbol} — Multi-target placed\nStop-limit BUY ${qty} sh → trigger $${trigger}\n${modeDesc}\nSL: $${sl}`, { live: true });
+            } else {
+              const reason = ld.message || JSON.stringify(ld);
+              console.error(`[LIVE ${label}] Order rejected: ${reason}`);
+              await sendTelegram(`❌ [LIVE] ${label} | ${symbol} — Order rejected\nReason: ${reason}`, { live: true });
+            }
+          } catch(liveErr) {
+            console.error(`[LIVE] Multi-target placement error: ${liveErr.message}`);
+            await sendTelegram(`⚠️ [LIVE] Failed to place ${symbol}: ${liveErr.message}`, { live: true }).catch(() => {});
+          }
+        }
+      }
       return res.json({ ok: true, order: d, orderId: d.id });
     }
 
@@ -535,6 +587,28 @@ app.post('/trade', async (req, res) => {
     } catch(e) { console.error('DB pending save error:', e.message); }
     console.log(`[${label}] Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
     await sendTelegram(`🟢 ${label} | ${symbol} — Bracket placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\nTP: $${tp}  ·  SL: $${sl}`);
+    // Mirror to live account (bull only)
+    if (hasLive) {
+      const liveDedup = db.prepare(`SELECT id FROM trades WHERE date(created_at)=? AND symbol=? AND direction='bull' AND account='bull' AND environment='live'`).get(dateET(), symbol.toUpperCase());
+      if (!liveDedup) {
+        try {
+          const lh = { 'APCA-API-KEY-ID': liveKey, 'APCA-API-SECRET-KEY': liveSecret, 'Content-Type': 'application/json' };
+          const lr = await fetch(`${ALPACA_LIVE_BASE}/orders`, { method: 'POST', headers: lh, body: JSON.stringify(order) });
+          const ld = await lr.json();
+          if (lr.ok) {
+            try { db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment) VALUES (?,?,?,?,?,?,?,?,?,?,'bracket','pending','live') ON CONFLICT(alpaca_order_id) DO NOTHING`).run(ld.id, symbol.toUpperCase(), direction, 'bull', trigger, qty, trigger * qty, tp, sl, nowETStr()); } catch(e) { console.error('Live DB save error:', e.message); }
+            await sendTelegram(`🟢 [LIVE] ${label} | ${symbol} — Bracket placed\nStop-limit BUY ${qty} sh → trigger $${trigger}\nTP: $${tp}  ·  SL: $${sl}`, { live: true });
+          } else {
+            const reason = ld.message || JSON.stringify(ld);
+            console.error(`[LIVE ${label}] Order rejected: ${reason}`);
+            await sendTelegram(`❌ [LIVE] ${label} | ${symbol} — Order rejected\nReason: ${reason}`, { live: true });
+          }
+        } catch(liveErr) {
+          console.error(`[LIVE] Bracket placement error: ${liveErr.message}`);
+          await sendTelegram(`⚠️ [LIVE] Failed to place ${symbol}: ${liveErr.message}`, { live: true }).catch(() => {});
+        }
+      }
+    }
     res.json({ ok: true, order: d });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -761,11 +835,14 @@ function buildTradeMessage(order, label, ctx = {}) {
   return lines.join('\n');
 }
 
-async function sendTelegram(text) {
-  const r = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+async function sendTelegram(text, opts = {}) {
+  const token  = opts.live ? TELEGRAM_LIVE_TOKEN  : TELEGRAM_TOKEN;
+  const chatId = opts.live ? TELEGRAM_LIVE_CHAT_ID : TELEGRAM_CHAT_ID;
+  if (opts.live && (!token || !chatId)) return;
+  const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text })
+    body: JSON.stringify({ chat_id: chatId, text })
   });
   if (!r.ok) {
     const body = await r.text();
@@ -773,14 +850,14 @@ async function sendTelegram(text) {
   }
 }
 
-async function sendTradeNotification(order, label, ctx = {}) {
-  try { await sendTelegram(buildTradeMessage(order, label, ctx)); }
+async function sendTradeNotification(order, label, ctx = {}, tgOpts = {}) {
+  try { await sendTelegram(buildTradeMessage(order, label, ctx), tgOpts); }
   catch (e) { console.error('Telegram error:', e.message); }
 }
 
 // ── Multi-target exit management ───────────────────────────────────────────────
 
-async function placeMultiTargetExits(entryOrder, meta, key, secret) {
+async function placeMultiTargetExits(entryOrder, meta, key, secret, baseUrl = ALPACA_BASE, tgOpts = {}) {
   const { symbol, target1, target2, trailPct, stopLossPrice, isBull, label } = meta;
   const qty  = parseInt(entryOrder.filled_qty || entryOrder.qty || meta.qty);
   const side = isBull ? 'sell' : 'buy';
@@ -791,36 +868,36 @@ async function placeMultiTargetExits(entryOrder, meta, key, secret) {
     if (!target2) {
       // 1 target: all shares exit at T1, SL covers all
       const [t1Res, slRes] = await Promise.all([
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'limit', limit_price:String(target1), time_in_force:'day' }) }),
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'stop', stop_price:String(stopLossPrice), time_in_force:'day' }) })
+        fetch(`${baseUrl}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'limit', limit_price:String(target1), time_in_force:'day' }) }),
+        fetch(`${baseUrl}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'stop', stop_price:String(stopLossPrice), time_in_force:'day' }) })
       ]);
       const [t1d, sld] = await Promise.all([t1Res.json(), slRes.json()]);
       placed.t1OrderId = t1d.id; placed.slOrderId = sld.id;
-      await sendTelegram(`📐 ${label} | ${symbol} — Exits armed\nAll ${qty} sh → limit $${target1}\nSL: $${stopLossPrice}`);
+      await sendTelegram(`📐 ${label} | ${symbol} — Exits armed\nAll ${qty} sh → limit $${target1}\nSL: $${stopLossPrice}`, tgOpts);
     } else if (!trailPct) {
       // 2 targets: 50/50 split, no trailing stop
       const half1 = Math.floor(qty / 2), half2 = qty - half1;
       const [t1Res, t2Res, slRes] = await Promise.all([
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(half1), side, type:'limit', limit_price:String(target1), time_in_force:'day' }) }),
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(half2), side, type:'limit', limit_price:String(target2), time_in_force:'day' }) }),
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'stop', stop_price:String(stopLossPrice), time_in_force:'day' }) })
+        fetch(`${baseUrl}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(half1), side, type:'limit', limit_price:String(target1), time_in_force:'day' }) }),
+        fetch(`${baseUrl}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(half2), side, type:'limit', limit_price:String(target2), time_in_force:'day' }) }),
+        fetch(`${baseUrl}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'stop', stop_price:String(stopLossPrice), time_in_force:'day' }) })
       ]);
       const [t1d, t2d, sld] = await Promise.all([t1Res.json(), t2Res.json(), slRes.json()]);
       placed.t1OrderId = t1d.id; placed.t2OrderId = t2d.id; placed.slOrderId = sld.id;
-      await sendTelegram(`📐 ${label} | ${symbol} — Exits armed\n½ ${half1} sh → $${target1}\n½ ${half2} sh → $${target2}\nSL: $${stopLossPrice}`);
+      await sendTelegram(`📐 ${label} | ${symbol} — Exits armed\n½ ${half1} sh → $${target1}\n½ ${half2} sh → $${target2}\nSL: $${stopLossPrice}`, tgOpts);
     } else {
       // 3+ targets: 1/3 each with trailing stop (T3)
       const share1 = Math.floor(qty / 3), share2 = Math.floor(qty / 3), share3 = qty - share1 - share2;
       const [t1Res, t2Res, trailRes, slRes] = await Promise.all([
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(share1), side, type:'limit', limit_price:String(target1), time_in_force:'day' }) }),
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(share2), side, type:'limit', limit_price:String(target2), time_in_force:'day' }) }),
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(share3), side, type:'trailing_stop', trail_percent:String(trailPct), time_in_force:'day' }) }),
-        fetch(`${ALPACA_BASE}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'stop', stop_price:String(stopLossPrice), time_in_force:'day' }) })
+        fetch(`${baseUrl}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(share1), side, type:'limit', limit_price:String(target1), time_in_force:'day' }) }),
+        fetch(`${baseUrl}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(share2), side, type:'limit', limit_price:String(target2), time_in_force:'day' }) }),
+        fetch(`${baseUrl}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(share3), side, type:'trailing_stop', trail_percent:String(trailPct), time_in_force:'day' }) }),
+        fetch(`${baseUrl}/orders`, { method:'POST', headers, body: JSON.stringify({ symbol, qty:String(qty), side, type:'stop', stop_price:String(stopLossPrice), time_in_force:'day' }) })
       ]);
       const [t1d, t2d, trld, sld] = await Promise.all([t1Res.json(), t2Res.json(), trailRes.json(), slRes.json()]);
       placed.t1OrderId = t1d.id; placed.t2OrderId = t2d.id;
       placed.trailOrderId = trld.id; placed.slOrderId = sld.id;
-      await sendTelegram(`📐 ${label} | ${symbol} — Exits armed\n⅓ ${share1} sh → $${target1}\n⅓ ${share2} sh → $${target2}\n⅓ ${share3} sh → Trail ${trailPct}%\nSL: $${stopLossPrice}`);
+      await sendTelegram(`📐 ${label} | ${symbol} — Exits armed\n⅓ ${share1} sh → $${target1}\n⅓ ${share2} sh → $${target2}\n⅓ ${share3} sh → Trail ${trailPct}%\nSL: $${stopLossPrice}`, tgOpts);
     }
     meta.exitOrderIds = placed;
     meta.status = 'exits_placed';
@@ -836,16 +913,16 @@ async function placeMultiTargetExits(entryOrder, meta, key, secret) {
     } catch(e) { console.error('Failed to save SL/trail order IDs to trades:', e.message); }
   } catch(e) {
     console.error(`[${label}] Multi-target exits error: ${e.message}`);
-    await sendTelegram(`⚠️ [${label}] Failed to place multi exits for ${symbol}: ${e.message}`).catch(() => {});
+    await sendTelegram(`⚠️ [${label}] Failed to place multi exits for ${symbol}: ${e.message}`, tgOpts).catch(() => {});
   }
 }
 
-async function handleTarget2Fill(entryId, meta, key, secret) {
+async function handleTarget2Fill(entryId, meta, key, secret, baseUrl = ALPACA_BASE) {
   const { symbol, label, exitOrderIds } = meta;
   const headers = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret, 'Content-Type': 'application/json' };
   if (exitOrderIds?.slOrderId) {
     try {
-      await fetch(`${ALPACA_BASE}/orders/${exitOrderIds.slOrderId}`, { method:'DELETE', headers });
+      await fetch(`${baseUrl}/orders/${exitOrderIds.slOrderId}`, { method:'DELETE', headers });
       console.log(`[${label}] Cancelled stop loss ${exitOrderIds.slOrderId} after T2 fill for ${symbol}`);
     } catch(e) { console.error(`[${label}] Cancel SL error: ${e.message}`); }
   }
@@ -893,17 +970,26 @@ async function recoverMultiTargetOrders() {
   if (!pending.length) return;
   console.log(`[Recovery] Checking ${pending.length} pending multi-target order(s)...`);
   for (const [orderId, meta] of pending) {
-    const key    = meta.acct === 'bull' ? process.env.ALPACA_KEY    : process.env.ALPACA_BEAR_KEY;
-    const secret = meta.acct === 'bull' ? process.env.ALPACA_SECRET : process.env.ALPACA_BEAR_SECRET;
+    let key, secret, baseUrl, tgOpts;
+    if (meta.acct === 'live') {
+      key = process.env.ALPACA_LIVE_KEY; secret = process.env.ALPACA_LIVE_SECRET;
+      baseUrl = ALPACA_LIVE_BASE; tgOpts = { live: true };
+    } else if (meta.acct === 'bull') {
+      key = process.env.ALPACA_KEY; secret = process.env.ALPACA_SECRET;
+      baseUrl = ALPACA_BASE; tgOpts = {};
+    } else {
+      key = process.env.ALPACA_BEAR_KEY; secret = process.env.ALPACA_BEAR_SECRET;
+      baseUrl = ALPACA_BASE; tgOpts = {};
+    }
     if (!key || !secret) continue;
     try {
-      const r = await fetch(`${ALPACA_BASE}/orders/${orderId}`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
+      const r = await fetch(`${baseUrl}/orders/${orderId}`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
       if (!r.ok) continue;
       const order = await r.json();
       if (order.status === 'filled') {
         console.log(`[Recovery][${meta.label}] Entry filled during downtime — placing exits for ${meta.symbol}`);
         seenOrderIds.add(orderId);
-        await placeMultiTargetExits(order, meta, key, secret);
+        await placeMultiTargetExits(order, meta, key, secret, baseUrl, tgOpts);
         saveOrderMetadata();
       } else if (['canceled','expired'].includes(order.status)) {
         delete orderMetadata[orderId];
@@ -913,10 +999,10 @@ async function recoverMultiTargetOrders() {
   }
 }
 
-async function seedAccount(key, secret) {
+async function seedAccount(key, secret, baseUrl = ALPACA_BASE) {
   if (!key || !secret) return;
   try {
-    const r = await fetch(`${ALPACA_BASE}/orders?status=filled&limit=50&nested=true`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
+    const r = await fetch(`${baseUrl}/orders?status=filled&limit=50&nested=true`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
     if (!r.ok) return;
     const orders = await r.json();
     // Don't seed orders that are still pending exit placement — they need to be processed
@@ -942,13 +1028,21 @@ async function seedAccount(key, secret) {
 async function seedSeenOrders() {
   await seedAccount(process.env.ALPACA_KEY, process.env.ALPACA_SECRET);
   await seedAccount(process.env.ALPACA_BEAR_KEY, process.env.ALPACA_BEAR_SECRET);
+  if (process.env.ALPACA_LIVE_KEY && process.env.ALPACA_LIVE_SECRET) {
+    await seedAccount(process.env.ALPACA_LIVE_KEY, process.env.ALPACA_LIVE_SECRET, ALPACA_LIVE_BASE);
+  }
   console.log(`Seeded ${seenOrderIds.size} existing filled orders (no notifications)`);
 }
 
-async function pollAccount(key, secret, label) {
+async function pollAccount(key, secret, label, opts = {}) {
+  const baseUrl     = opts.baseUrl || ALPACA_BASE;
+  const isLive      = opts.isLive  || false;
+  const env         = isLive ? 'live' : 'paper';
+  const accountName = isLive ? 'bull' : label.toLowerCase();
+  const tgOpts      = isLive ? { live: true } : {};
   if (!key || !secret) return;
   try {
-    const r = await fetch(`${ALPACA_BASE}/orders?status=filled&limit=50`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
+    const r = await fetch(`${baseUrl}/orders?status=filled&limit=50`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
     if (!r.ok) { console.error(`[${label}] Alpaca poll error:`, r.status); return; }
     const orders = await r.json();
     for (const order of orders) {
@@ -957,13 +1051,13 @@ async function pollAccount(key, secret, label) {
 
       const meta = orderMetadata[order.id];
       if (meta && meta.mode === 'multi' && meta.status === 'pending_fill') {
-        await placeMultiTargetExits(order, meta, key, secret);
+        await placeMultiTargetExits(order, meta, key, secret, baseUrl, tgOpts);
       }
 
       const entryId  = exitToEntry[order.id];
       const exitMeta = entryId ? orderMetadata[entryId] : null;
       if (exitMeta && order.id === exitMeta.exitOrderIds?.t2OrderId && exitMeta.status === 'exits_placed') {
-        await handleTarget2Fill(entryId, exitMeta, key, secret);
+        await handleTarget2Fill(entryId, exitMeta, key, secret, baseUrl);
       }
 
       // Look up the original entry fill price so exit notifications can show P&L
@@ -983,7 +1077,7 @@ async function pollAccount(key, secret, label) {
         isT2:    exitMeta ? order.id === exitMeta.exitOrderIds?.t2OrderId    : false,
         isTrail: exitMeta ? order.id === exitMeta.exitOrderIds?.trailOrderId : false,
         isSL:    exitMeta ? order.id === exitMeta.exitOrderIds?.slOrderId    : (isBracketExit && (order.order_type === 'stop' || order.order_type === 'stop_limit')),
-      });
+      }, tgOpts);
 
       // Save filled entry orders to trades DB; also record P&L for multi-target exits
       try {
@@ -1041,8 +1135,8 @@ async function pollAccount(key, secret, label) {
             slPrice = meta.stopLossPrice ? parseFloat(meta.stopLossPrice) : null;
           }
           db.prepare(`
-            INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,'filled')
+            INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,'filled',?)
             ON CONFLICT(alpaca_order_id) DO UPDATE SET
               status='filled',
               entry_price=excluded.entry_price,
@@ -1050,9 +1144,9 @@ async function pollAccount(key, secret, label) {
               dollar_amount=excluded.dollar_amount,
               entry_time_et=excluded.entry_time_et
           `).run(
-            order.id, order.symbol, direction, label.toLowerCase(),
+            order.id, order.symbol, direction, accountName,
             entryPrice, shares, entryPrice * shares,
-            t1Price, slPrice, entryTimeET, orderMode
+            t1Price, slPrice, entryTimeET, orderMode, env
           );
           // Register bracket exit legs so they're identified as exits when they fill
           if (order.order_class === 'bracket') {
@@ -1066,7 +1160,8 @@ async function pollAccount(key, secret, label) {
   } catch (e) { console.error(`[${label}] Poll error:`, e.message); }
 }
 
-async function syncBracketExits(key, secret, label, dateStr = null) {
+async function syncBracketExits(key, secret, label, dateStr = null, opts = {}) {
+  const baseUrl = opts.baseUrl || ALPACA_BASE;
   if (!key || !secret) return;
   try {
     let after, until = '';
@@ -1080,7 +1175,7 @@ async function syncBracketExits(key, secret, label, dateStr = null) {
       after = todayStart.toISOString();
     }
     const r = await fetch(
-      `${ALPACA_BASE}/orders?status=all&limit=200&after=${after}${until}&nested=true`,
+      `${baseUrl}/orders?status=all&limit=200&after=${after}${until}&nested=true`,
       { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } }
     );
     if (!r.ok) return;
@@ -1127,19 +1222,25 @@ async function syncBracketExits(key, secret, label, dateStr = null) {
 async function pollFilledOrders() {
   await pollAccount(process.env.ALPACA_KEY, process.env.ALPACA_SECRET, 'BULL');
   await pollAccount(process.env.ALPACA_BEAR_KEY, process.env.ALPACA_BEAR_SECRET, 'BEAR');
+  if (process.env.ALPACA_LIVE_KEY && process.env.ALPACA_LIVE_SECRET) {
+    await pollAccount(process.env.ALPACA_LIVE_KEY, process.env.ALPACA_LIVE_SECRET, 'LIVE', { baseUrl: ALPACA_LIVE_BASE, isLive: true });
+  }
   await syncBracketExits(process.env.ALPACA_KEY, process.env.ALPACA_SECRET, 'BULL');
   await syncBracketExits(process.env.ALPACA_BEAR_KEY, process.env.ALPACA_BEAR_SECRET, 'BEAR');
+  if (process.env.ALPACA_LIVE_KEY && process.env.ALPACA_LIVE_SECRET) {
+    await syncBracketExits(process.env.ALPACA_LIVE_KEY, process.env.ALPACA_LIVE_SECRET, 'LIVE', null, { baseUrl: ALPACA_LIVE_BASE });
+  }
 }
 
 // ── Daily summary at 21:00 UTC (4pm ET) ───────────────────────────────────────
 
 let lastSummaryDate = null;
 
-async function fetchAccountStats(key, secret) {
+async function fetchAccountStats(key, secret, baseUrl = ALPACA_BASE) {
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
   const r = await fetch(
-    `${ALPACA_BASE}/orders?status=all&limit=200&after=${todayStart.toISOString()}&nested=true`,
+    `${baseUrl}/orders?status=all&limit=200&after=${todayStart.toISOString()}&nested=true`,
     { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } }
   );
   if (!r.ok) throw new Error(`Alpaca responded ${r.status}`);
@@ -1182,21 +1283,36 @@ async function sendDailySummary() {
       bear ? fmt(bear,'BEAR') : '[BEAR] no account configured',
       `Net P&L: ${netSign}$${netPnl.toFixed(2)}`
     ].join('\n'));
+    const liveKey = process.env.ALPACA_LIVE_KEY;
+    const liveSecret = process.env.ALPACA_LIVE_SECRET;
+    if (liveKey && liveSecret) {
+      try {
+        const live = await fetchAccountStats(liveKey, liveSecret, ALPACA_LIVE_BASE);
+        const liveSign = live.totalPnl >= 0 ? '+' : '';
+        await sendTelegram([
+          `📊 [LIVE] Daily Summary — ${date}`,
+          fmt(live, 'LIVE BULL'),
+          `Net P&L: ${liveSign}$${live.totalPnl.toFixed(2)}`
+        ].join('\n'), { live: true });
+      } catch(e) { console.error('Live daily summary error:', e.message); }
+    }
     console.log('Daily summary sent');
   } catch (e) { console.error('Daily summary error:', e.message); }
 }
 
 async function syncPendingOrderStatuses() {
   const accounts = [
-    { key: process.env.ALPACA_KEY, secret: process.env.ALPACA_SECRET, label: 'bull' },
-    { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'bear' },
-  ];
-  const pending = db.prepare(`SELECT alpaca_order_id, account FROM trades WHERE status='pending' AND date(created_at)=?`).all(dateET());
+    { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'bull', env: 'paper', baseUrl: ALPACA_BASE      },
+    { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'bear', env: 'paper', baseUrl: ALPACA_BASE      },
+    { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'bull', env: 'live',  baseUrl: ALPACA_LIVE_BASE },
+  ].filter(a => a.key && a.secret);
+  const pending = db.prepare(`SELECT alpaca_order_id, account, environment FROM trades WHERE status='pending' AND date(created_at)=?`).all(dateET());
   for (const trade of pending) {
-    const acct = accounts.find(a => a.label === trade.account);
+    const tradeEnv = trade.environment || 'paper';
+    const acct = accounts.find(a => a.label === trade.account && a.env === tradeEnv);
     if (!acct?.key) continue;
     try {
-      const r = await fetch(`${ALPACA_BASE}/orders/${trade.alpaca_order_id}`, {
+      const r = await fetch(`${acct.baseUrl}/orders/${trade.alpaca_order_id}`, {
         headers: { 'APCA-API-KEY-ID': acct.key, 'APCA-API-SECRET-KEY': acct.secret }
       });
       if (!r.ok) continue;
@@ -1217,8 +1333,9 @@ async function syncPendingOrderStatuses() {
 
 async function closeAllPositions(triggeredBy = 'manual') {
   const accounts = [
-    { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL' },
-    { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR' },
+    { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL', baseUrl: ALPACA_BASE,      isLive: false },
+    { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR', baseUrl: ALPACA_BASE,      isLive: false },
+    { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'LIVE', baseUrl: ALPACA_LIVE_BASE, isLive: true  },
   ].filter(a => a.key && a.secret);
 
   let submitted = 0, errors = [];
@@ -1230,18 +1347,18 @@ async function closeAllPositions(triggeredBy = 'manual') {
     acctHeaders[acct.label] = headers;
     try {
       // Fetch positions before closing so we can report symbols and P&L
-      const posRes = await fetch(`${ALPACA_BASE}/positions`, { headers });
+      const posRes = await fetch(`${acct.baseUrl}/positions`, { headers });
       const positions = posRes.ok ? await posRes.json() : [];
       if (!Array.isArray(positions) || positions.length === 0) continue;
 
-      // Cancel all open orders first — then wait 3s for Alpaca to finish processing
+      // Cancel all open orders first — then wait 30s for Alpaca to finish processing
       // the cancellations before closing positions. Without the delay, bracket order
       // legs (TP/SL) may still be locking shares, causing "insufficient qty" errors.
-      await fetch(`${ALPACA_BASE}/orders`, { method: 'DELETE', headers });
+      await fetch(`${acct.baseUrl}/orders`, { method: 'DELETE', headers });
       await new Promise(resolve => setTimeout(resolve, 30000));
 
       // Submit close orders — Alpaca returns 207 Multi-Status with per-position results
-      const r = await fetch(`${ALPACA_BASE}/positions`, { method: 'DELETE', headers });
+      const r = await fetch(`${acct.baseUrl}/positions`, { method: 'DELETE', headers });
       const result = await r.json();
       console.log(`[${acct.label}] DELETE /positions status=${r.status} body=${JSON.stringify(result)}`);
 
@@ -1281,7 +1398,7 @@ async function closeAllPositions(triggeredBy = 'manual') {
       const headers = acctHeaders[acct.label];
       if (!headers) continue;
       try {
-        const posRes = await fetch(`${ALPACA_BASE}/positions`, { headers });
+        const posRes = await fetch(`${acct.baseUrl}/positions`, { headers });
         const remaining = posRes.ok ? await posRes.json() : [];
         if (Array.isArray(remaining) && remaining.length > 0) {
           stillOpen.push(`${acct.label}: ${remaining.map(p => p.symbol).join(', ')}`);
@@ -1296,9 +1413,9 @@ async function closeAllPositions(triggeredBy = 'manual') {
         const headers = acctHeaders[acct.label];
         if (!headers) continue;
         try {
-          await fetch(`${ALPACA_BASE}/orders`, { method: 'DELETE', headers });
+          await fetch(`${acct.baseUrl}/orders`, { method: 'DELETE', headers });
           await new Promise(resolve => setTimeout(resolve, 30000));
-          const retryRes = await fetch(`${ALPACA_BASE}/positions`, { method: 'DELETE', headers });
+          const retryRes = await fetch(`${acct.baseUrl}/positions`, { method: 'DELETE', headers });
           const retryBody = await retryRes.json();
           console.log(`[${acct.label}] Retry close status=${retryRes.status} body=${JSON.stringify(retryBody)}`);
         } catch(e) { console.error(`[${acct.label}] Retry close error:`, e.message); }
@@ -1310,7 +1427,7 @@ async function closeAllPositions(triggeredBy = 'manual') {
         const headers = acctHeaders[acct.label];
         if (!headers) continue;
         try {
-          const posRes = await fetch(`${ALPACA_BASE}/positions`, { headers });
+          const posRes = await fetch(`${acct.baseUrl}/positions`, { headers });
           const remaining = posRes.ok ? await posRes.json() : [];
           if (Array.isArray(remaining) && remaining.length > 0) {
             finalOpen.push(`${acct.label}: ${remaining.map(p => p.symbol).join(', ')}`);
@@ -1374,17 +1491,19 @@ app.post('/settings/auto-close', (req, res) => {
 
 async function cancelStaleOpeningOrders() {
   const accounts = [
-    { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL' },
-    { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR' },
+    { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL', baseUrl: ALPACA_BASE,      isLive: false },
+    { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR', baseUrl: ALPACA_BASE,      isLive: false },
+    { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'LIVE', baseUrl: ALPACA_LIVE_BASE, isLive: true  },
   ].filter(a => a.key && a.secret);
 
   let totalCancelled = 0;
-  const cancelMessages = [];
+  const paperCancelMessages = [];
+  const liveCancelMessages = [];
 
   for (const acct of accounts) {
     const headers = { 'APCA-API-KEY-ID': acct.key, 'APCA-API-SECRET-KEY': acct.secret };
 
-    const r = await fetch(`${ALPACA_BASE}/orders?status=open&limit=200`, { headers });
+    const r = await fetch(`${acct.baseUrl}/orders?status=open&limit=200`, { headers });
     if (!r.ok) { console.error(`[OpenFilter][${acct.label}] order fetch failed: ${r.status}`); continue; }
     const orders = await r.json();
 
@@ -1415,11 +1534,12 @@ async function cancelStaleOpeningOrders() {
 
       if (shouldCancel) {
         try {
-          const del = await fetch(`${ALPACA_BASE}/orders/${order.id}`, { method: 'DELETE', headers });
+          const del = await fetch(`${acct.baseUrl}/orders/${order.id}`, { method: 'DELETE', headers });
           if (del.ok || del.status === 204) {
             totalCancelled++;
             const dir = isBull ? '📈 Bull' : '📉 SS';
-            cancelMessages.push(`${dir} ${order.symbol}: trigger $${trigger} | open $${currentPrice.toFixed(2)}`);
+            const msg = `${dir} ${order.symbol}: trigger $${trigger} | open $${currentPrice.toFixed(2)}`;
+            if (acct.isLive) liveCancelMessages.push(msg); else paperCancelMessages.push(msg);
             try { db.prepare(`UPDATE trades SET status='cancelled' WHERE alpaca_order_id=?`).run(order.id); } catch(e) {}
             console.log(`[OpenFilter][${acct.label}] cancelled ${order.symbol} — trigger $${trigger} vs $${currentPrice.toFixed(2)}`);
           }
@@ -1430,9 +1550,13 @@ async function cancelStaleOpeningOrders() {
     }
   }
 
-  if (cancelMessages.length) {
-    await sendTelegram([`🚫 Market open filter — ${totalCancelled} order(s) cancelled`, ...cancelMessages].join('\n')).catch(() => {});
-  } else {
+  if (paperCancelMessages.length) {
+    await sendTelegram([`🚫 Market open filter — ${paperCancelMessages.length} order(s) cancelled`, ...paperCancelMessages].join('\n')).catch(() => {});
+  }
+  if (liveCancelMessages.length) {
+    await sendTelegram([`🚫 [LIVE] Market open filter — ${liveCancelMessages.length} order(s) cancelled`, ...liveCancelMessages].join('\n'), { live: true }).catch(() => {});
+  }
+  if (!paperCancelMessages.length && !liveCancelMessages.length) {
     console.log('[OpenFilter] All open orders valid at market open');
   }
   return totalCancelled;
