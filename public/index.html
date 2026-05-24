@@ -61,10 +61,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 
 /* ── Metrics row ────────────────────────────────────────────────────────── */
 .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.25rem;}
-.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;}
-.metric-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;}
-.metric-val{font-family:var(--mono);font-size:22px;font-weight:600;}
-.metric-sub{font-size:11px;color:var(--muted);margin-top:3px;font-family:var(--mono);}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem 1.5rem;display:flex;flex-direction:column;}
+.metric-label{font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-top:8px;order:2;}
+.metric-val{font-family:var(--mono);font-size:30px;font-weight:700;line-height:1.05;order:1;}
+.metric-sub{display:none;}
 
 /* ── Control row ────────────────────────────────────────────────────────── */
 .control-row{display:flex;gap:8px;align-items:center;margin-bottom:1rem;flex-wrap:wrap;}
@@ -96,8 +96,8 @@ input[type="date"]:focus{border-color:#333;}
 
 /* badges */
 .badge{display:inline-flex;align-items:center;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap;letter-spacing:.2px;}
-.badge-bull{background:rgba(96,165,250,.12);color:var(--blue);}
-.badge-bear{background:rgba(251,146,60,.12);color:var(--orange);}
+.badge-bull{background:#2563eb;color:#fff;letter-spacing:.3px;}
+.badge-bear{background:#dc2626;color:#fff;letter-spacing:.3px;}
 .badge-active{background:rgba(74,222,128,.12);color:var(--green);}
 .badge-pending{background:rgba(251,191,36,.12);color:var(--amber);}
 .badge-closed{background:#1e1e24;color:var(--muted);}
@@ -254,6 +254,53 @@ button{cursor:pointer;font-family:var(--font);}
 .ord-sym{font-family:var(--mono);font-weight:500;font-size:14px;width:52px;flex-shrink:0;}
 .ord-detail{font-size:11px;color:var(--muted);flex:1;font-family:var(--mono);line-height:1.8;}
 
+/* ── Trades table ────────────────────────────────────────────────────────── */
+.dash-controls{display:flex;flex-direction:column;margin-bottom:.5rem;}
+.dash-tab-row{display:flex;align-items:center;border-bottom:1px solid var(--border);padding-bottom:0;}
+.dash-tabs{display:flex;gap:0;flex-shrink:0;}
+.dash-tab{background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;color:var(--muted);font-family:var(--font);font-size:13px;font-weight:500;padding:10px 24px 10px 0;cursor:pointer;display:flex;align-items:center;gap:8px;transition:color .15s;margin-right:4px;}
+.dash-tab.active{color:var(--text);border-bottom:2px solid var(--cyan);}
+.dash-tab:hover:not(.active){color:var(--text);}
+.tab-count{background:#1a1a24;border-radius:10px;font-size:11px;font-family:var(--mono);font-weight:700;padding:2px 8px;color:var(--muted);}
+.dash-tab.active .tab-count{background:var(--cyan);color:#001518;}
+.dash-subrow{display:flex;align-items:center;padding:8px 0 6px;}
+.auto-refresh-label{font-size:11px;color:var(--muted);font-family:var(--mono);}
+.table-wrap{overflow-x:auto;}
+.trades-table{width:100%;border-collapse:collapse;font-size:13px;}
+.trades-table th{text-align:left;color:var(--text);font-size:13px;font-weight:600;text-transform:none;letter-spacing:0;padding:12px 16px;border-bottom:1px solid var(--border);white-space:nowrap;background:transparent;}
+.trades-table td{padding:16px 16px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.trades-table tr:last-child td{border-bottom:none;}
+.trades-table tbody tr{transition:background .1s;}
+.trades-table tbody tr:hover{background:rgba(255,255,255,.03);}
+.t-sym{font-family:var(--font);font-size:20px;font-weight:700;letter-spacing:-.3px;line-height:1;color:var(--text);}
+.t-price{font-family:var(--mono);font-size:14px;font-weight:500;color:var(--text);}
+.t-sub{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:3px;}
+.t-pnl-pos{color:var(--green);font-family:var(--mono);font-weight:700;font-size:16px;}
+.t-pnl-neg{color:var(--red);font-family:var(--mono);font-weight:700;font-size:16px;}
+.t-bar-wrap{min-width:110px;}
+.t-bar-labels{display:flex;justify-content:space-between;font-size:10px;font-family:var(--mono);color:var(--muted);margin-bottom:4px;}
+.t-bar-track{width:100%;height:3px;background:#1c1c26;border-radius:2px;position:relative;}
+.t-bar-fill{height:100%;border-radius:2px;position:absolute;left:0;top:0;background:var(--cyan);}
+.t-bar-dot{display:none;}
+.status-open{background:var(--green);color:#001a0f;font-size:11px;font-weight:700;border-radius:6px;padding:4px 11px;white-space:nowrap;display:inline-block;}
+.status-pending{background:var(--amber);color:#1a0f00;font-size:11px;font-weight:700;border-radius:6px;padding:4px 11px;white-space:nowrap;display:inline-block;}
+.status-win{background:var(--green);color:#001a0f;font-size:11px;font-weight:700;border-radius:6px;padding:4px 11px;white-space:nowrap;display:inline-block;}
+.status-loss{background:var(--red);color:#fff;font-size:11px;font-weight:700;border-radius:6px;padding:4px 11px;white-space:nowrap;display:inline-block;}
+.status-gray{background:#1e1e2a;color:var(--muted);font-size:11px;font-weight:700;border-radius:6px;padding:4px 11px;white-space:nowrap;display:inline-block;}
+.btn-close-sm{background:transparent;border:1px solid var(--border);color:var(--muted);font-size:11px;font-weight:600;border-radius:6px;padding:5px 12px;cursor:pointer;white-space:nowrap;transition:all .15s;}
+.btn-close-sm:hover{border-color:var(--red);color:var(--red);}
+.btn-cancel-sm{background:transparent;border:1px solid var(--border);color:var(--muted);font-size:11px;font-weight:600;border-radius:6px;padding:5px 12px;cursor:pointer;white-space:nowrap;transition:all .15s;}
+.btn-cancel-sm:hover{border-color:var(--amber);color:var(--amber);}
+.close-panel-row td{background:#0f0f17;padding:0 16px 14px!important;}
+.close-options{display:flex;align-items:center;gap:10px;padding:10px 0 0;}
+.btn-mkt-sm{background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.3);color:var(--red);font-size:12px;font-weight:600;border-radius:6px;padding:6px 16px;cursor:pointer;transition:background .15s;}
+.btn-mkt-sm:hover{background:rgba(248,113,113,.28);}
+.btn-lmt-sm{background:rgba(96,165,250,.15);border:1px solid rgba(96,165,250,.3);color:var(--blue);font-size:12px;font-weight:600;border-radius:6px;padding:6px 16px;cursor:pointer;transition:background .15s;}
+.btn-lmt-sm:hover{background:rgba(96,165,250,.28);}
+.btn-x-sm{background:transparent;border:1px solid var(--border);color:var(--muted);font-size:12px;border-radius:6px;padding:6px 10px;cursor:pointer;}
+.lmt-input{width:90px;background:#1a1a24;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 8px;font-size:12px;font-family:var(--mono);}
+.spark-wrap{margin:5px 0 3px;line-height:0;}
+
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media(max-width:767px){
   .metrics{grid-template-columns:1fr 1fr;}
@@ -404,25 +451,38 @@ button{cursor:pointer;font-family:var(--font);}
 
   <!-- DASHBOARD TAB -->
   <div id="content-dashboard">
-    <div class="control-row">
-      <select id="dash-account" onchange="refreshDashboard()">
-        <option value="all">All accounts</option>
-        <option value="bull">Bull account</option>
-        <option value="bear">Bear account</option>
-      </select>
-      <select id="dash-filter" onchange="filterDashCards()">
-        <option value="all">All trades</option>
-        <option value="position">Positions</option>
-        <option value="pending">Open orders</option>
-        <option value="closed">Closed</option>
-        <option value="bull">Bull only</option>
-        <option value="bear">Bear only</option>
-      </select>
-      <input type="date" id="dash-date" onchange="refreshDashboard()"/>
-      <button class="btn-refresh" onclick="refreshDashboard()">↻ Refresh</button>
+    <div class="dash-controls">
+      <div class="dash-tab-row">
+        <div class="dash-tabs">
+          <button class="dash-tab active" id="tab-open" onclick="setDashView('open')">Open <span class="tab-count" id="tc-open">0</span></button>
+          <button class="dash-tab" id="tab-closed" onclick="setDashView('closed')">Closed <span class="tab-count" id="tc-closed">0</span></button>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+          <input type="date" id="dash-date" onchange="refreshDashboard()"/>
+          <button class="btn-refresh" onclick="refreshDashboard()">↻ Refresh</button>
+        </div>
+      </div>
     </div>
-    <div class="cards-grid" id="dash-cards">
-      <div class="empty" style="grid-column:1/-1;">Loading...</div>
+    <div class="table-wrap">
+      <table class="trades-table">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Dir</th>
+            <th>Entry</th>
+            <th>Current</th>
+            <th>Target / SL</th>
+            <th>Size</th>
+            <th>P&amp;L</th>
+            <th>Progress</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="dash-tbody">
+          <tr><td colspan="10" class="empty">Loading...</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -581,6 +641,7 @@ let orderMode = 'bracket';
 let activeTab = 'dashboard';
 let sumDate = todayET();
 let dashCardData = {};
+let dashView = 'open';
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
 function todayET() {
@@ -733,40 +794,49 @@ async function loadMetrics() {
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────────
+function setDashView(v) {
+  dashView = v;
+  document.getElementById('tab-open').classList.toggle('active', v === 'open');
+  document.getElementById('tab-closed').classList.toggle('active', v === 'closed');
+  document.querySelectorAll('#dash-tbody tr[data-close-row]').forEach(tr => tr.style.display = 'none');
+  document.querySelectorAll('#dash-tbody tr[data-view]').forEach(tr => {
+    tr.style.display = tr.dataset.view === v ? '' : 'none';
+  });
+}
+
+async function dashMarketClose(symbol, acct) {
+  if (!confirm(`Close ${symbol} (${acct}) at market?`)) return;
+  try {
+    const r = await fetch('/alpaca-'+acct+'/positions/'+symbol, { method: 'DELETE' });
+    if (!r.ok) { const d=await r.json(); alert('Error: '+(d.message||JSON.stringify(d))); return; }
+    setTimeout(refreshDashboard, 800);
+  } catch(e) { alert('Error: '+e.message); }
+}
+
 async function refreshDashboard() {
-  const el = document.getElementById('dash-cards');
-  el.innerHTML = '<div class="empty" style="grid-column:1/-1;"><span class="spinner"></span>Loading...</div>';
+  const tbody = document.getElementById('dash-tbody');
+  tbody.innerHTML = '<tr><td colspan="10" class="empty"><span class="spinner"></span>Loading...</td></tr>';
 
   const dateVal = document.getElementById('dash-date').value || todayET();
-  const acctFilter = document.getElementById('dash-account').value;
-
   const todayStart = new Date(dateVal + 'T04:00:00Z').toISOString();
   const todayEnd   = new Date(dateVal + 'T23:59:59Z').toISOString();
   const ordQs = `/orders?status=all&limit=200&nested=true&direction=desc&after=${encodeURIComponent(todayStart)}&before=${encodeURIComponent(todayEnd)}`;
 
   try {
-    const fetches = [];
-    if (acctFilter !== 'bear') fetches.push(fetch('/alpaca-bull/positions').then(r=>r.ok?r.json():[]).then(d=>d.map(p=>({...p,_acct:'bull'}))));
-    else fetches.push(Promise.resolve([]));
-    if (acctFilter !== 'bull') fetches.push(fetch('/alpaca-bear/positions').then(r=>r.ok?r.json():[]).then(d=>d.map(p=>({...p,_acct:'bear'}))));
-    else fetches.push(Promise.resolve([]));
-    if (acctFilter !== 'bear') fetches.push(fetch('/alpaca-bull'+ordQs).then(r=>r.ok?r.json():[]).then(d=>d.map(o=>({...o,_acct:'bull'}))));
-    else fetches.push(Promise.resolve([]));
-    if (acctFilter !== 'bull') fetches.push(fetch('/alpaca-bear'+ordQs).then(r=>r.ok?r.json():[]).then(d=>d.map(o=>({...o,_acct:'bear'}))));
-    else fetches.push(Promise.resolve([]));
-    fetches.push(fetch('/api/order-metadata').then(r=>r.ok?r.json():{}));
-
-    const [bullPos, bearPos, bullOrd, bearOrd, serverMeta] = await Promise.all(fetches);
-
-    const allPos = [...bullPos, ...bearPos];
-    const allOrd = [...bullOrd, ...bearOrd];
+    const [bullPos, bearPos, bullOrd, bearOrd, serverMeta] = await Promise.all([
+      fetch('/alpaca-bull/positions').then(r=>r.ok?r.json():[]).then(d=>d.map(p=>({...p,_acct:'bull'}))),
+      fetch('/alpaca-bear/positions').then(r=>r.ok?r.json():[]).then(d=>d.map(p=>({...p,_acct:'bear'}))),
+      fetch('/alpaca-bull'+ordQs).then(r=>r.ok?r.json():[]).then(d=>d.map(o=>({...o,_acct:'bull'}))),
+      fetch('/alpaca-bear'+ordQs).then(r=>r.ok?r.json():[]).then(d=>d.map(o=>({...o,_acct:'bear'}))),
+      fetch('/api/order-metadata').then(r=>r.ok?r.json():{}),
+    ]);
 
     const posMap = {};
-    for (const p of allPos) posMap[p.symbol+'|'+p._acct] = p;
+    for (const p of [...bullPos, ...bearPos]) posMap[p.symbol+'|'+p._acct] = p;
 
     const seen = new Set();
     const byKey = {};
-    for (const o of allOrd) {
+    for (const o of [...bullOrd, ...bearOrd]) {
       if (seen.has(o.id)) continue; seen.add(o.id);
       const k = o.symbol+'|'+o._acct;
       if (!byKey[k]) byKey[k] = [];
@@ -775,11 +845,23 @@ async function refreshDashboard() {
     for (const k of Object.keys(posMap)) { if (!byKey[k]) byKey[k] = []; }
 
     const keys = Object.keys(byKey);
-    if (!keys.length) { el.innerHTML = '<div class="empty" style="grid-column:1/-1;">No trades found for this date</div>'; return; }
+    if (!keys.length) {
+      tbody.innerHTML = '<tr><td colspan="10" class="empty">No trades found for this date</td></tr>';
+      document.getElementById('tc-open').textContent = '0';
+      document.getElementById('tc-closed').textContent = '0';
+      return;
+    }
 
     const symbols = [...new Set(keys.map(k => k.split('|')[0]))];
-    const snapRes = await fetch('/alpaca-data/stocks/snapshots?symbols=' + encodeURIComponent(symbols.join(',')));
+    const barsStart = dateVal + 'T13:00:00Z';
+    const barsEnd   = dateVal + 'T21:00:00Z';
+    const [snapRes, barsRes] = await Promise.all([
+      fetch('/alpaca-data/stocks/snapshots?symbols=' + encodeURIComponent(symbols.join(','))),
+      fetch('/alpaca-data/stocks/bars?symbols=' + encodeURIComponent(symbols.join(',')) + `&timeframe=5Min&start=${encodeURIComponent(barsStart)}&end=${encodeURIComponent(barsEnd)}&limit=200`),
+    ]);
     const snaps = snapRes.ok ? await snapRes.json() : {};
+    const barsData = barsRes.ok ? await barsRes.json() : {};
+    const bars = barsData.bars || {};
 
     const OPEN = ['new','accepted','held','partially_filled'];
     keys.sort((a, b) => {
@@ -787,12 +869,15 @@ async function refreshDashboard() {
       return rank(a) - rank(b);
     });
 
-    const cards = keys.map(key => buildTradeCard(key, posMap, byKey, snaps, serverMeta)).filter(Boolean);
-    el.innerHTML = cards.join('') || '<div class="empty" style="grid-column:1/-1;">No trades found</div>';
+    const rows = keys.map(key => buildTradeRow(key, posMap, byKey, snaps, serverMeta, bars)).filter(Boolean);
+    tbody.innerHTML = rows.join('') || '<tr><td colspan="10" class="empty">No trades found</td></tr>';
 
-    // Store card data for close panels
-    filterDashCards();
-  } catch(e) { el.innerHTML = `<div class="msg msg-err" style="grid-column:1/-1;">${e.message}</div>`; }
+    document.getElementById('tc-open').textContent   = document.querySelectorAll('#dash-tbody tr[data-view="open"]').length;
+    document.getElementById('tc-closed').textContent = document.querySelectorAll('#dash-tbody tr[data-view="closed"]').length;
+    setDashView(dashView);
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="10" class="msg msg-err">${e.message}</td></tr>`;
+  }
 }
 
 // ── Live Account ───────────────────────────────────────────────────────────────
@@ -894,7 +979,75 @@ async function refreshLive() {
   } catch(e) { el.innerHTML = `<div class="msg msg-err" style="grid-column:1/-1;">${e.message}</div>`; }
 }
 
-function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
+function buildSparkline(symbolBars, current) {
+  if (!symbolBars || symbolBars.length < 2) return '';
+  const closes = symbolBars.map(b => b.c);
+  if (current) closes.push(current);
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const range = max - min || 1;
+  const W = 80, H = 26;
+  const pts = closes.map((c, i) => {
+    const x = (i / (closes.length - 1)) * W;
+    const y = H - ((c - min) / range) * (H - 2) - 1;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const color = closes[closes.length - 1] >= closes[0] ? '#4ade80' : '#f87171';
+  return `<div class="spark-wrap"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="overflow:visible;"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/></svg></div>`;
+}
+
+function toggleCloseRow(domKey) {
+  const row = document.getElementById('close-row-'+domKey);
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+async function submitMarketCloseInline(symbol, acct, domKey) {
+  if (!confirm(`Close ${symbol} at market?`)) return;
+  try {
+    const r = await fetch('/alpaca-'+acct+'/positions/'+symbol, { method: 'DELETE' });
+    if (!r.ok) { const d=await r.json(); alert('Error: '+(d.message||JSON.stringify(d))); return; }
+    setTimeout(refreshDashboard, 800);
+  } catch(e) { alert('Error: '+e.message); }
+}
+async function submitLimitCloseInline(symbol, acct, domKey) {
+  const data  = dashCardData[domKey];
+  const input = document.getElementById('lmt-'+domKey);
+  if (!input || !data) return;
+  const price = parseFloat(input.value);
+  if (!price || isNaN(price)) { alert('Enter a valid limit price'); return; }
+  const side = data.isLong ? 'sell' : 'buy';
+  try {
+    const openR = await fetch('/alpaca-'+acct+'/orders?status=open&symbols='+symbol);
+    if (openR.ok) {
+      const openOrders = await openR.json();
+      await Promise.all(openOrders.map(o => fetch('/alpaca-'+acct+'/orders/'+o.id, { method: 'DELETE' })));
+    }
+    const r = await fetch('/alpaca-'+acct+'/orders', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ symbol, qty: String(data.qty), side, type:'limit', limit_price:String(price), time_in_force:'day' })
+    });
+    const d = await r.json();
+    if (!r.ok) { alert('Error: '+(d.message||JSON.stringify(d))); return; }
+    setTimeout(refreshDashboard, 800);
+  } catch(e) { alert('Error: '+e.message); }
+}
+
+function buildMiniBar({ entry, target, current, isBull }) {
+  if (!entry || !target) return '';
+  const range = Math.abs(target - entry);
+  if (!range) return '';
+  let pct = 0;
+  if (current) {
+    const moved = isBull ? (current - entry) : (entry - current);
+    pct = Math.max(0, Math.min(100, (moved / range) * 100));
+  }
+  return `<div class="t-bar-wrap">
+    <div class="t-bar-labels"><span>0%</span><span style="color:${pct>=50?'var(--green)':'var(--muted)'};">${pct.toFixed(0)}%</span></div>
+    <div class="t-bar-track"><div class="t-bar-fill" style="width:${pct}%;"></div></div>
+  </div>`;
+}
+
+function buildTradeRow(key, posMap, byKey, snaps, serverMeta, bars={}) {
   const [symbol, acct] = key.split('|');
   const domKey = symbol + '_' + acct;
   const pos    = posMap[key];
@@ -913,246 +1066,118 @@ function buildTradeCard(key, posMap, byKey, snaps, serverMeta) {
   const qty       = pos ? Math.abs(parseFloat(pos.qty)) : Math.abs(parseFloat(entryOrd?.qty || 0));
   const isBull    = isLong;
 
-  const legs  = entryOrd?.legs || [];
-  const tpLeg = legs.find(l => l.type === 'limit' && l.side !== entryOrd?.side);
-  const slLeg = legs.find(l => l.type === 'stop_limit' || l.type === 'stop');
-  const tp    = tpLeg ? parseFloat(tpLeg.limit_price) : null;
-  const sl    = slLeg ? parseFloat(slLeg.stop_price)  : null;
+  const ordLegs = entryOrd?.legs || [];
+  const tpLeg   = ordLegs.find(l => l.type === 'limit' && l.side !== entryOrd?.side);
+  const slLeg   = ordLegs.find(l => l.type === 'stop_limit' || l.type === 'stop');
+  const tp      = tpLeg ? parseFloat(tpLeg.limit_price) : null;
+  const sl      = slLeg ? parseFloat(slLeg.stop_price)  : null;
 
-  // Multi-target metadata from server
   let meta = null;
-  for (const [oid, m] of Object.entries(serverMeta || {})) {
+  for (const [, m] of Object.entries(serverMeta || {})) {
     if (m.symbol === symbol && m.acct === acct) { meta = m; break; }
   }
-  const t1 = tp || meta?.target1 || null;
-  const t2 = meta?.target2 || null;
-  const trailPct = meta?.trailPct || null;
-  const slPrice  = sl || meta?.stopLossPrice || null;
+  const t1      = tp || meta?.target1 || null;
+  const slPrice = sl || meta?.stopLossPrice || null;
 
-  const dirClass = isBull ? 'bull' : 'bear';
-  const dirBadge = isBull
+  const dirBadge  = isBull
     ? '<span class="badge badge-bull">▲ Bull</span>'
     : '<span class="badge badge-bear">▼ Bear</span>';
-  const acctBadge = acct === 'bull'
-    ? '<span class="badge" style="background:rgba(74,222,128,.08);color:var(--green);font-size:10px;">BULL</span>'
-    : '<span class="badge" style="background:rgba(96,165,250,.08);color:var(--blue);font-size:10px;">BEAR</span>';
+  const acctLabel = acct === 'bull' ? 'Bull' : 'Bear';
+  const sparkline = buildSparkline(bars[symbol], current);
 
   dashCardData[domKey] = { qty, isLong, tp: t1, current, acct, symbol };
 
-  // ── POSITION card ──────────────────────────────────────────────────────────
+  // ── OPEN POSITION row ──────────────────────────────────────────────────────
   if (hasFill) {
-    const entry   = parseFloat(pos.avg_entry_price);
-    const pnl     = (current - entry) * parseFloat(pos.qty) * (pos.side === 'long' ? 1 : -1);
-    const pnlPct  = entry ? pnl / (entry * Math.abs(parseFloat(pos.qty))) * 100 : 0;
-    const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-
-    const priceBar = buildPriceBar({ sl: slPrice, entry, targets: [t1, t2].filter(Boolean), current, isBull, trailPct });
-    const t1Filled = tpLeg?.status === 'filled' || meta?.status === 'target2_filled';
-    const t2Filled = meta?.status === 'target2_filled';
-    const legs = buildLegs({ t1, t2, trailPct, entry, qty, isBull, tpLeg, slLeg, current, t1Filled, t2Filled });
-
-    return `<div class="trade-card ${dirClass}" data-filter="position" data-dir="${dirClass}">
-      <div class="card-inner">
-        <div class="card-head">
-          <div>
-            <div class="card-sym">${symbol}</div>
-            <div class="card-badges">${dirBadge}<span class="badge badge-active">Active</span></div>
-          </div>
-          <div class="card-price">
-            <div style="font-size:10px;color:var(--muted);text-align:right;margin-bottom:2px;font-family:var(--mono);">Current</div>
-            <div class="card-price-val">${current ? fmt(current) : '—'}</div>
-            <div class="card-pnl" style="color:${pnlColor};">${sign(pnl)}${fmt(pnl)} <span style="font-size:11px;">(${fmtPct(pnlPct)})</span></div>
-          </div>
+    const entry  = parseFloat(pos.avg_entry_price);
+    const pnl    = (current - entry) * parseFloat(pos.qty) * (pos.side === 'long' ? 1 : -1);
+    const pnlPct = entry ? pnl / (entry * Math.abs(parseFloat(pos.qty))) * 100 : 0;
+    const pnlCls = pnl >= 0 ? 't-pnl-pos' : 't-pnl-neg';
+    const bar    = buildMiniBar({ entry, target: t1, current, isBull });
+    const tpSl   = [t1 ? `<span style="color:var(--green)">T ${fmt(t1)}</span>` : '',
+                    slPrice ? `<span style="color:var(--red)">SL ${fmt(slPrice)}</span>` : ''].filter(Boolean).join(' <span style="color:var(--muted);">/</span> ') || '—';
+    const lmtDefault = t1 ? t1.toFixed(2) : current ? current.toFixed(2) : '';
+    return `<tr data-view="open" data-dir="${isBull?'bull':'bear'}">
+      <td><div class="t-sym">${symbol}</div>${sparkline}<div class="t-sub">${acctLabel} · ${fmtTime(entryOrd?.filled_at)}</div></td>
+      <td>${dirBadge}</td>
+      <td><div class="t-price">${fmt(entry)}</div><div class="t-sub">${qty} sh</div></td>
+      <td><div class="t-price">${current ? fmt(current) : '—'}</div></td>
+      <td style="font-size:12px;">${tpSl}</td>
+      <td><div class="t-price">${fmt(entry * qty)}</div></td>
+      <td><div class="${pnlCls}">${pnl >= 0 ? '+' : ''}${fmt(pnl)}</div><div class="t-sub">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</div></td>
+      <td>${bar}</td>
+      <td><span class="status-open">Open</span></td>
+      <td><button class="btn-close-sm" onclick="toggleCloseRow('${domKey}')">Close ▾</button></td>
+    </tr>
+    <tr id="close-row-${domKey}" data-close-row="true" style="display:none;" class="close-panel-row">
+      <td colspan="10">
+        <div class="close-options">
+          <span style="font-size:12px;color:var(--muted);font-weight:500;">Close ${symbol}:</span>
+          <button class="btn-mkt-sm" onclick="submitMarketCloseInline('${symbol}','${acct}','${domKey}')">Market — now</button>
+          <span style="color:var(--muted);font-size:12px;">or limit</span>
+          <input class="lmt-input" type="number" id="lmt-${domKey}" value="${lmtDefault}" step="0.01"/>
+          <button class="btn-lmt-sm" onclick="submitLimitCloseInline('${symbol}','${acct}','${domKey}')">Limit</button>
+          <button class="btn-x-sm" onclick="toggleCloseRow('${domKey}')">✕</button>
         </div>
-        <div class="card-stats">
-          Entry <span>${fmt(entry)}</span>
-          Shares <span>${qty}</span>
-          Amt <span>${fmt(entry * qty)}</span>
-          Time <span>${fmtTime(entryOrd?.filled_at)}</span>
-        </div>
-        ${priceBar}
-        <div class="legs-toggle" onclick="toggleLegs('${domKey}')">
-          <span>Target Legs</span><span id="legs-arrow-${domKey}">▼</span>
-        </div>
-        <div class="legs-body open" id="legs-${domKey}">${legs}</div>
-        <div class="card-actions">
-          <button class="btn-close-pos" id="closebtn_${domKey}" onclick="expandClose('${domKey}')">Close Position</button>
-        </div>
-        <div class="close-expand" id="closepanel_${domKey}">
-          <button class="btn-mkt" onclick="submitMarketClose('${symbol}','${acct}','${domKey}')">Market — close now</button>
-          <div class="close-row">
-            <span style="font-size:12px;color:var(--muted);white-space:nowrap;">Limit</span>
-            <input type="number" id="closeprice_${domKey}" value="${t1 ? t1.toFixed(2) : current.toFixed(2)}" step="0.01"/>
-            <button class="btn-lmt" onclick="submitLimitClose('${symbol}','${acct}','${domKey}')">Submit</button>
-            <button class="btn-x" onclick="collapseClose('${domKey}')">✕</button>
-          </div>
-        </div>
-      </div>
-    </div>`;
+      </td>
+    </tr>`;
   }
 
-  // ── PENDING card ───────────────────────────────────────────────────────────
+  // ── PENDING ORDER row ──────────────────────────────────────────────────────
   if (isPending && entryOrd) {
     const trigger  = parseFloat(entryOrd.stop_price || entryOrd.limit_price || 0);
     const distance = (trigger && current) ? Math.abs(trigger - current) : null;
-    const priceBar = buildPriceBar({ sl: slPrice, entry: trigger, targets: [t1, t2].filter(Boolean), current, isBull, trailPct });
-    return `<div class="trade-card ${dirClass}" data-filter="pending" data-dir="${dirClass}">
-      <div class="card-inner">
-        <div class="card-head">
-          <div>
-            <div class="card-sym">${symbol}</div>
-            <div class="card-badges">${dirBadge}<span class="badge badge-pending">Pending</span></div>
-          </div>
-          <div class="card-price">
-            <div class="card-price-val">${current ? fmt(current) : '—'}</div>
-          </div>
-        </div>
-        <div class="pending-dist">
-          Trigger ${fmt(trigger)}${distance ? ` · ${fmt(distance)} away` : ''}
-        </div>
-        ${priceBar}
-        <div class="card-stats">
-          Shares <span>${qty}</span>
-          ${t1 ? `T1 <span style="color:var(--green)">${fmt(t1)}</span>` : ''}
-          ${slPrice ? `SL <span style="color:var(--red)">${fmt(slPrice)}</span>` : ''}
-        </div>
-        <button class="btn-cancel-ord" onclick="dashCancelOrder('${entryOrd.id}','${acct}')">Cancel Order</button>
-      </div>
-    </div>`;
+    const bar      = buildMiniBar({ entry: trigger, target: t1, current, isBull });
+    const tpSl     = [t1 ? `<span style="color:var(--green)">T ${fmt(t1)}</span>` : '',
+                      slPrice ? `<span style="color:var(--red)">SL ${fmt(slPrice)}</span>` : ''].filter(Boolean).join(' <span style="color:var(--muted);">/</span> ') || '—';
+    return `<tr data-view="open" data-dir="${isBull?'bull':'bear'}">
+      <td><div class="t-sym">${symbol}</div>${sparkline}<div class="t-sub">${acctLabel}</div></td>
+      <td>${dirBadge}</td>
+      <td><div class="t-price">${fmt(trigger)}</div><div class="t-sub">${qty} sh · trigger${distance ? ' · ' + fmt(distance) + ' away' : ''}</div></td>
+      <td><div class="t-price">${current ? fmt(current) : '—'}</div></td>
+      <td style="font-size:12px;">${tpSl}</td>
+      <td><div class="t-price">${fmt(trigger * qty)}</div></td>
+      <td><span style="color:var(--muted);font-size:12px;">—</span></td>
+      <td>${bar}</td>
+      <td><span class="status-pending">Pending</span></td>
+      <td><button class="btn-cancel-sm" onclick="dashCancelOrder('${entryOrd.id}','${acct}')">Cancel</button></td>
+    </tr>`;
   }
 
-  // ── CLOSED card ────────────────────────────────────────────────────────────
+  // ── CLOSED TRADE row ───────────────────────────────────────────────────────
   if (isClosed && entryOrd) {
-    const filledExitLeg = entryOrd.status !== 'filled' ? null
-      : (entryOrd.legs || []).find(l => l.status === 'filled');
-    const isCanceled = ['canceled','expired'].includes(entryOrd.status);
+    const isCanceled  = ['canceled','expired'].includes(entryOrd.status);
+    const entryPrice  = parseFloat(entryOrd.filled_avg_price || 0);
+    const filledExit  = (entryOrd.legs || []).find(l => l.status === 'filled');
+    const exitPrice   = filledExit ? parseFloat(filledExit.filled_avg_price || 0) : null;
+    const exitVia     = filledExit ? (filledExit.type === 'limit' ? 'T1' : 'SL') : '';
 
-    let exitPrice = null, entryPrice = null, pnl = null, pnlPct = 0, exitLabel = '';
-    if (filledExitLeg) {
-      entryPrice = parseFloat(entryOrd.filled_avg_price || 0);
-      exitPrice  = parseFloat(filledExitLeg.filled_avg_price || 0);
+    let pnl = null, pnlPct = 0;
+    if (exitPrice && entryPrice) {
       const fQty = parseFloat(entryOrd.filled_qty || entryOrd.qty || 0);
       pnl    = (entryOrd.side === 'buy' ? exitPrice - entryPrice : entryPrice - exitPrice) * fQty;
       pnlPct = entryPrice ? pnl / (entryPrice * fQty) * 100 : 0;
-      exitLabel = filledExitLeg.type === 'limit' ? 'take-profit' : 'stop-loss';
-    } else if (entryOrd.status === 'filled') {
-      entryPrice = parseFloat(entryOrd.filled_avg_price || 0);
     }
-
-    const pnlColor = pnl == null ? 'var(--muted)' : pnl >= 0 ? 'var(--green)' : 'var(--red)';
-    const winLoss  = pnl == null ? '' : pnl >= 0
-      ? '<span class="badge badge-win">Win</span>'
-      : '<span class="badge badge-loss">Loss</span>';
-
-    // Build leg outcomes for closed cards (bracket and multi-target)
-    const closedLegsHtml = (() => {
-      if (!entryPrice || isCanceled) return '';
-      let lHtml = '';
-      let totalPnl = 0;
-
-      if (meta?.exitOrderIds) {
-        // Multi-target trade: look up exit orders from the orders list by ID
-        const { t1OrderId, t2OrderId, trailOrderId, slOrderId } = meta.exitOrderIds;
-        const t1Ord    = orders.find(o => o.id === t1OrderId);
-        const t2Ord    = orders.find(o => o.id === t2OrderId);
-        const trailOrd = orders.find(o => o.id === trailOrderId);
-        const slOrd    = orders.find(o => o.id === slOrderId);
-        const hasT2 = !!meta.target2, hasTrail = !!meta.trailPct;
-        const s1 = hasT2 && hasTrail ? Math.floor(qty/3) : (hasT2 ? Math.floor(qty/2) : qty);
-        const s2 = hasT2 && hasTrail ? Math.floor(qty/3) : (hasT2 ? qty - Math.floor(qty/2) : 0);
-        const s3 = hasT2 && hasTrail ? qty - Math.floor(qty/3)*2 : 0;
-
-        const legRow = (label, px, shares, filled, pnl, isLoss) => {
-          const c = filled ? (isLoss ? 'var(--red)' : 'var(--green)') : 'var(--muted)';
-          return `<div class="leg-row"><span class="leg-label">${label}</span><span class="leg-price" style="color:${c};">${px}</span><span class="leg-shares">${shares} sh</span><span class="leg-status" style="color:${c};">${filled ? '✓ filled' : '✗ not filled'}</span>${pnl != null ? `<span class="leg-pnl" style="color:${c};">${sign(pnl)}${fmt(pnl)}</span>` : ''}</div>`;
-        };
-
-        if (meta.target1) {
-          const filled = t1Ord?.status === 'filled';
-          const px = filled ? parseFloat(t1Ord.filled_avg_price || meta.target1) : meta.target1;
-          const pnl = filled ? (isBull ? (px - entryPrice)*s1 : (entryPrice - px)*s1) : null;
-          if (pnl != null) totalPnl += pnl;
-          lHtml += legRow('T1', fmt(px), s1, filled, pnl, false);
-        }
-        if (meta.target2) {
-          const filled = t2Ord?.status === 'filled';
-          const px = filled ? parseFloat(t2Ord.filled_avg_price || meta.target2) : meta.target2;
-          const pnl = filled ? (isBull ? (px - entryPrice)*s2 : (entryPrice - px)*s2) : null;
-          if (pnl != null) totalPnl += pnl;
-          lHtml += legRow('T2', fmt(px), s2, filled, pnl, false);
-        }
-        if (hasTrail && trailOrd) {
-          const filled = trailOrd.status === 'filled';
-          const px = filled ? parseFloat(trailOrd.filled_avg_price || 0) : null;
-          const pnl = px ? (isBull ? (px - entryPrice)*s3 : (entryPrice - px)*s3) : null;
-          if (pnl != null) totalPnl += pnl;
-          const isLoss = pnl != null && pnl < 0;
-          lHtml += legRow('T3', px ? fmt(px) : `Trail ${meta.trailPct}%`, s3, filled, pnl, isLoss);
-        }
-        if (slOrd?.status === 'filled') {
-          const px = parseFloat(slOrd.filled_avg_price || 0);
-          const exitedShares = (t1Ord?.status==='filled' ? s1 : 0) + (t2Ord?.status==='filled' ? s2 : 0) + (trailOrd?.status==='filled' ? s3 : 0);
-          const remainShares = Math.max(0, qty - exitedShares);
-          if (remainShares > 0) {
-            const pnl = (isBull ? (px - entryPrice)*remainShares : (entryPrice - px)*remainShares);
-            totalPnl += pnl;
-            lHtml += legRow('SL', fmt(px), remainShares, true, pnl, true);
-          }
-        }
-      } else {
-        // Bracket trade: legs are embedded in entryOrd
-        const allLegs = entryOrd?.legs || [];
-        const slHit = allLegs.some(l => (l.type==='stop_limit'||l.type==='stop') && l.status==='filled');
-        if (t1) {
-          const t1Leg = allLegs.find(l => l.type==='limit' && l.status==='filled');
-          const t1Fill = t1Leg ? parseFloat(t1Leg.filled_avg_price || t1) : null;
-          const t1Pnl = t1Fill ? (isBull ? (t1Fill-entryPrice)*qty : (entryPrice-t1Fill)*qty) : null;
-          if (t1Pnl != null) totalPnl += t1Pnl;
-          const c = t1Pnl != null ? 'var(--green)' : 'var(--muted)';
-          lHtml += `<div class="leg-row"><span class="leg-label">T1</span><span class="leg-price" style="color:${c};">${t1Fill?fmt(t1Fill):fmt(t1)}</span><span class="leg-shares">${qty} sh</span><span class="leg-status" style="color:${c};">${t1Pnl!=null?'✓ filled':'✗ not reached'}</span>${t1Pnl!=null?`<span class="leg-pnl" style="color:var(--green);">${sign(t1Pnl)}${fmt(t1Pnl)}</span>`:''}</div>`;
-        }
-        if (slHit) {
-          const slLeg = allLegs.find(l => (l.type==='stop_limit'||l.type==='stop') && l.status==='filled');
-          const slFill = slLeg ? parseFloat(slLeg.filled_avg_price || 0) : null;
-          const slPnl = slFill ? (isBull ? (slFill-entryPrice)*qty : (entryPrice-slFill)*qty) : null;
-          if (slPnl != null) totalPnl += slPnl;
-          lHtml += `<div class="leg-row"><span class="leg-label">SL</span><span class="leg-price" style="color:var(--red);">${slFill?fmt(slFill):'—'}</span><span class="leg-shares">${qty} sh</span><span class="leg-status" style="color:var(--red);">stop loss</span>${slPnl!=null?`<span class="leg-pnl" style="color:var(--red);">${sign(slPnl)}${fmt(slPnl)}</span>`:''}</div>`;
-        }
-      }
-
-      if (!lHtml) return '';
-      return lHtml + `<div style="display:flex;gap:14px;padding:6px 10px;font-size:11px;font-family:var(--mono);border-top:1px solid var(--border);margin-top:2px;"><span style="color:${totalPnl>=0?'var(--green)':'var(--red)'};">Total: ${sign(totalPnl)}${fmt(totalPnl)}</span></div>`;
-    })();
-
-    return `<div class="trade-card ${dirClass} closed-card" data-filter="closed" data-dir="${dirClass}">
-      ${pnl != null ? `<div class="pnl-banner ${pnl >= 0 ? 'win' : 'loss'}">
-        <span>${sign(pnl || 0)}${fmt(pnl)}</span>
-        <span style="color:${pnlColor};font-size:12px;">${fmtPct(pnlPct)}</span>
-      </div>` : ''}
-      <div class="card-inner">
-        <div class="card-head">
-          <div>
-            <div class="card-sym">${symbol}</div>
-            <div class="card-badges">${dirBadge}${winLoss}<span class="badge badge-closed">${isCanceled ? entryOrd.status : 'Closed'}</span></div>
-          </div>
-          <div class="card-price">
-            ${exitPrice ? `<div class="card-price-val">${fmt(exitPrice)}</div>` : ''}
-          </div>
-        </div>
-        <div class="card-stats">
-          ${entryPrice ? `Entry <span>${fmt(entryPrice)}</span>` : ''}
-          ${exitPrice  ? `Exit <span>${fmt(exitPrice)}</span>` : ''}
-          ${exitLabel  ? `Via <span style="color:var(--muted)">${exitLabel}</span>` : ''}
-          Shares <span>${qty}</span>
-        </div>
-        ${closedLegsHtml ? `
-        <div class="legs-toggle" onclick="toggleLegs('${domKey}_c')">
-          <span>Target Legs</span><span id="legs-arrow-${domKey}_c">▼</span>
-        </div>
-        <div class="legs-body open" id="legs-${domKey}_c">${closedLegsHtml}</div>
-        ` : ''}
-      </div>
-    </div>`;
+    const pnlCls   = pnl == null ? '' : pnl >= 0 ? 't-pnl-pos' : 't-pnl-neg';
+    const statusBadge = isCanceled
+      ? `<span class="status-gray">${entryOrd.status}</span>`
+      : pnl == null
+        ? `<span class="status-gray">Closed</span>`
+        : pnl >= 0
+          ? `<span class="status-win">Win</span>`
+          : `<span class="status-loss">Loss</span>`;
+    return `<tr data-view="closed" data-dir="${isBull?'bull':'bear'}">
+      <td><div class="t-sym">${symbol}</div>${sparkline}<div class="t-sub">${acctLabel}</div></td>
+      <td>${dirBadge}</td>
+      <td><div class="t-price">${entryPrice ? fmt(entryPrice) : '—'}</div><div class="t-sub">${qty} sh</div></td>
+      <td><div class="t-price">${exitPrice ? fmt(exitPrice) : '—'}</div><div class="t-sub" style="color:${exitVia==='T1'?'var(--green)':'var(--red)'};">${exitVia}</div></td>
+      <td style="font-size:12px;">${t1 ? `<span style="color:var(--muted)">T ${fmt(t1)}</span>` : '—'}</td>
+      <td><div class="t-price">${entryPrice && qty ? fmt(entryPrice * qty) : '—'}</div></td>
+      <td>${pnl != null ? `<div class="${pnlCls}">${pnl >= 0 ? '+' : ''}${fmt(pnl)}</div><div class="t-sub">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</div>` : '<span style="color:var(--muted);">—</span>'}</td>
+      <td></td>
+      <td>${statusBadge}</td>
+      <td></td>
+    </tr>`;
   }
   return '';
 }
@@ -1290,15 +1315,7 @@ function toggleLegs(key) {
   if (arrow) arrow.textContent = body.classList.contains('open') ? '▼' : '▶';
 }
 
-function filterDashCards() {
-  const f = document.getElementById('dash-filter').value;
-  document.querySelectorAll('.trade-card').forEach(card => {
-    const ft  = card.dataset.filter;
-    const dir = card.dataset.dir;
-    const show = f === 'all' || f === ft || (f === 'bull' && dir === 'bull') || (f === 'bear' && dir === 'bear');
-    card.style.display = show ? '' : 'none';
-  });
-}
+function filterDashCards() { /* replaced by setDashView */ }
 
 function expandClose(key) {
   document.getElementById('closebtn_'+key).style.display = 'none';
