@@ -1033,6 +1033,7 @@ async function refreshLive() {
             ${t.hold_minutes ? `<div>Hold <span>${Math.round(t.hold_minutes)}m</span></div>` : ''}
           </div>
           ${t.entry_time_et ? `<div style="font-size:11px;color:var(--muted);font-family:var(--mono);">${t.entry_time_et}</div>` : ''}
+          ${isPending && t.alpaca_order_id ? `<div style="margin-top:10px;"><button class="btn-cancel-ord" onclick="dashCancelOrder('${t.alpaca_order_id}','live')">Cancel Order</button></div>` : ''}
         </div>
         ${isClosed && t.total_pnl != null ? `<div class="pnl-banner ${t.total_pnl >= 0 ? 'win' : 'loss'}"><span>${t.exit_reason}</span><span>${t.total_pnl >= 0 ? '+' : ''}$${t.total_pnl.toFixed(2)} (${t.total_pct != null ? (t.total_pct >= 0 ? '+' : '') + t.total_pct.toFixed(2) + '%' : ''})</span></div>` : ''}
       </div>`;
@@ -1424,6 +1425,7 @@ async function dashCancelOrder(id, acct) {
   try {
     await fetch('/alpaca-'+acct+'/orders/'+id, { method: 'DELETE' });
     refreshDashboard();
+    refreshLive();
   } catch(e) { alert('Cancel failed: '+e.message); }
 }
 
