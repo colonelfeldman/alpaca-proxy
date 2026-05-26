@@ -580,7 +580,9 @@ button{cursor:pointer;font-family:var(--font);}
     <div class="control-row">
       <input type="date" id="live-date" onchange="refreshLive()"/>
       <button class="btn-refresh" onclick="refreshLive()">↻ Refresh</button>
+      <button class="btn-amber btn-sm" onclick="clearFailedSetups()" style="margin-left:auto;">Clear failed setups</button>
     </div>
+    <div id="clear-failed-msg"></div>
     <div class="cards-grid" id="live-cards">
       <div class="empty" style="grid-column:1/-1;">Loading...</div>
     </div>
@@ -944,6 +946,22 @@ async function refreshDashboard() {
 }
 
 // ── Live Account ───────────────────────────────────────────────────────────────
+async function clearFailedSetups() {
+  const msg = document.getElementById('clear-failed-msg');
+  const date = document.getElementById('live-date').value || todayET();
+  msg.innerHTML = '<div class="msg msg-info">Clearing...</div>';
+  try {
+    const r = await fetch(`/db/clear-failed-setups?date=${date}`, { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      msg.innerHTML = `<div class="msg msg-ok">Cleared ${d.deleted} failed setup(s) — you can re-scan now</div>`;
+      setTimeout(() => { msg.innerHTML = ''; }, 4000);
+    } else {
+      msg.innerHTML = `<div class="msg msg-err">${d.error}</div>`;
+    }
+  } catch(e) { msg.innerHTML = `<div class="msg msg-err">${e.message}</div>`; }
+}
+
 async function refreshLive() {
   const el = document.getElementById('live-cards');
   el.innerHTML = '<div class="empty" style="grid-column:1/-1;"><span class="spinner"></span>Loading...</div>';

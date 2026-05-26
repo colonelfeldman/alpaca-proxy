@@ -338,6 +338,23 @@ app.post('/db/backfill', async (req, res) => {
 });
 
 // ── DB: get trades for date ────────────────────────────────────────────────────
+// Delete today's parsed_setups that never made it into trades (failed/rejected orders)
+app.post('/db/clear-failed-setups', (req, res) => {
+  try {
+    const date = req.query.date || dateET();
+    const result = db.prepare(`
+      DELETE FROM parsed_setups
+      WHERE date = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM trades
+        WHERE trades.symbol = parsed_setups.symbol
+        AND date(trades.created_at) = parsed_setups.date
+      )
+    `).run(date);
+    res.json({ ok: true, deleted: result.changes });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/db/trades', (req, res) => {
   try {
     const date = req.query.date || dateET();
