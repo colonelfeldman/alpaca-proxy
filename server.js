@@ -95,8 +95,13 @@ function parseCookie(req, name) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+
 app.use((req, res, next) => {
   if (!SITE_PASSWORD) return next(); // disabled if env var not set
+
+  // Chrome extension — trust if webhook secret header matches
+  if (WEBHOOK_SECRET && req.headers['x-webhook-secret'] === WEBHOOK_SECRET) return next();
 
   // Valid token in query string → set 30-day cookie and redirect to clean URL
   if (req.query.token === SITE_PASSWORD) {
