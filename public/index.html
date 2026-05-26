@@ -581,6 +581,7 @@ button{cursor:pointer;font-family:var(--font);}
       <input type="date" id="live-date" onchange="refreshLive()"/>
       <button class="btn-refresh" onclick="refreshLive()">↻ Refresh</button>
       <button class="btn-amber btn-sm" onclick="clearFailedSetups()" style="margin-left:auto;">Clear failed setups</button>
+      <button class="btn-danger btn-sm" onclick="resetTodayLive()">Reset today</button>
     </div>
     <div id="clear-failed-msg"></div>
     <div class="cards-grid" id="live-cards">
@@ -946,6 +947,23 @@ async function refreshDashboard() {
 }
 
 // ── Live Account ───────────────────────────────────────────────────────────────
+async function resetTodayLive() {
+  if (!confirm('This will cancel ALL live orders and wipe today\'s live trade records so you can start fresh. Continue?')) return;
+  const msg = document.getElementById('clear-failed-msg');
+  msg.innerHTML = '<div class="msg msg-info">Resetting...</div>';
+  try {
+    const r = await fetch('/db/reset-today-live', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      msg.innerHTML = `<div class="msg msg-ok">Done — cancelled ${d.cancelled} order(s), cleared ${d.tradesDeleted} trade(s) and ${d.setupsDeleted} setup(s). Re-scan when ready.</div>`;
+      refreshLive();
+      setTimeout(() => { msg.innerHTML = ''; }, 6000);
+    } else {
+      msg.innerHTML = `<div class="msg msg-err">${d.error}</div>`;
+    }
+  } catch(e) { msg.innerHTML = `<div class="msg msg-err">${e.message}</div>`; }
+}
+
 async function clearFailedSetups() {
   const msg = document.getElementById('clear-failed-msg');
   const date = document.getElementById('live-date').value || todayET();

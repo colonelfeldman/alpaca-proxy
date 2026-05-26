@@ -339,6 +339,38 @@ app.post('/db/backfill', async (req, res) => {
 
 // ── DB: get trades for date ────────────────────────────────────────────────────
 // Delete today's parsed_setups that never made it into trades (failed/rejected orders)
+// Cancel all live orders + wipe today's live trades + parsed_setups so extension can retry clean
+app.post('/db/reset-today-live', async (req, res) => {
+  try {
+    const date = dateET();
+    const key    = process.env.ALPACA_LIVE_KEY;
+    const secret = process.env.ALPACA_LIVE_SECRET;
+
+    // 1. Cancel all open live orders
+    let cancelled = 0;
+    if (key && secret) {
+      const headers = { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret };
+      const r = await fetch(`${ALPACA_LIVE_BASE}/orders`, { method: 'DELETE', headers });
+      if (r.ok) {
+        const deleted = await r.json();
+        cancelled = Array.isArray(deleted) ? deleted.length : 0;
+      }
+    }
+
+    // 2. Delete today's live trades from DB
+    const tradesDeleted = db.prepare(
+      `DELETE FROM trades WHERE date(created_at) = ? AND environment = 'live'`
+    ).run(date).changes;
+
+    // 3. Delete all of today's parsed_setups
+    const setupsDeleted = db.prepare(
+      `DELETE FROM parsed_setups WHERE date = ?`
+    ).run(date).changes;
+
+    res.json({ ok: true, cancelled, tradesDeleted, setupsDeleted });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/db/clear-failed-setups', (req, res) => {
   try {
     const date = req.query.date || dateET();
