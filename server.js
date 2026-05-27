@@ -204,6 +204,28 @@ app.get('/api/order-metadata', (req, res) => {
   res.json(orderMetadata);
 });
 
+// ── Watchlist queue (setups detected when auto-trade is off) ───────────────────
+let watchlistQueue = [];
+
+app.post('/api/watchlist-queue', (req, res) => {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret && req.headers['x-webhook-secret'] !== secret) return res.status(401).json({ error: 'Unauthorized' });
+  const { setups } = req.body;
+  if (!Array.isArray(setups)) return res.status(400).json({ error: 'setups array required' });
+  watchlistQueue = setups;
+  console.log(`[Watchlist] Extension pushed ${setups.length} setup(s) — auto-trade was off`);
+  res.json({ ok: true, count: setups.length });
+});
+
+app.get('/api/watchlist-queue', (req, res) => {
+  res.json({ setups: watchlistQueue });
+});
+
+app.delete('/api/watchlist-queue', (req, res) => {
+  watchlistQueue = [];
+  res.json({ ok: true });
+});
+
 // Used by the Chrome extension to pre-check if a setup was already placed today
 // (works across multiple computers since both talk to the same server/DB)
 app.get('/api/setup-traded', (req, res) => {

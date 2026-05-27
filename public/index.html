@@ -803,6 +803,7 @@ function showTab(t) {
   if (t === 'live')      refreshLive();
   if (t === 'summary')   loadSummary();
   if (t === 'orders')    refreshOrders();
+  if (t === 'watchlist') loadWatchlistQueue();
 }
 
 // ── Market countdown ───────────────────────────────────────────────────────────
@@ -1609,6 +1610,23 @@ SMR Bullish above 13.50 (TGT 13.81, 14.50, 14.79)
 APLD Bullish above 38 (TGT 38.50, 38.76)`;
 
 function loadSample() { document.getElementById('watchlistInput').value = SAMPLE; }
+
+async function loadWatchlistQueue() {
+  try {
+    const r = await fetch('/api/watchlist-queue');
+    const data = await r.json();
+    if (!data.setups?.length) return;
+    parsedSetups = data.setups.map(s => ({ ...s, status: 'pending', schwabStatus: 'pending' }));
+    document.getElementById('setups-section').style.display = '';
+    document.getElementById('parse-msg').innerHTML =
+      `<div class="msg msg-ok">📥 ${parsedSetups.length} setup(s) loaded from extension scan — auto-trade was off</div>`;
+    renderSetups();
+    // Clear the queue so it doesn't reload stale data on next tab open
+    fetch('/api/watchlist-queue', { method: 'DELETE' });
+  } catch (e) {
+    console.warn('Watchlist queue load failed:', e.message);
+  }
+}
 
 function calcSL(trigger, dir) {
   const pct = parseFloat(document.getElementById('s-stopLossPct')?.value || localStorage.getItem('stopLossPct') || '3') / 100 || 0.03;
