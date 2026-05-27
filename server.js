@@ -218,7 +218,7 @@ app.post('/api/watchlist-queue', (req, res) => {
 });
 
 app.get('/api/watchlist-queue', (req, res) => {
-  res.json({ setups: watchlistQueue });
+  res.json(watchlistQueue);
 });
 
 app.delete('/api/watchlist-queue', (req, res) => {
