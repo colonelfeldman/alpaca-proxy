@@ -676,7 +676,7 @@ button{cursor:pointer;font-family:var(--font);}
       </div>
     </div>
 
-    <div id="wl-queue-banner" style="display:none;background:rgba(74,222,128,0.1);border:1px solid rgba(74,222,128,0.3);border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div id="wl-queue-banner" style="display:none;background:rgba(74,222,128,0.1);border:1px solid rgba(74,222,128,0.3);border-radius:8px;padding:10px 14px;margin-bottom:10px;align-items:center;justify-content:space-between;gap:10px;">
       <span id="wl-queue-msg" style="font-size:13px;color:var(--accent);"></span>
       <button class="btn-primary btn" style="margin-top:0;white-space:nowrap;" onclick="loadWatchlistQueue()">Load setups</button>
     </div>
@@ -1663,6 +1663,7 @@ async function pollWatchlistQueue() {
     } else {
       banner.style.display = 'none';
     }
+
   } catch (e) {}
 }
 setInterval(pollWatchlistQueue, 4000);
