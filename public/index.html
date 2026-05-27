@@ -653,6 +653,17 @@ button{cursor:pointer;font-family:var(--font);}
     </div>
     <div class="mode-desc" id="mode-desc">Manual: review each setup and place individually or all at once.</div>
 
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">
+      <div>
+        <div class="settings-label">Max $ per trade</div>
+        <input type="number" id="wl-maxDollars" value="10000" min="100" step="100" style="width:110px;" oninput="renderSetups()"/>
+      </div>
+      <div>
+        <div class="settings-label">Stop loss %</div>
+        <input type="number" id="wl-stopLossPct" value="3" min="0.1" max="20" step="0.1" style="width:80px;" oninput="renderSetups()"/>
+      </div>
+    </div>
+
     <div class="mode-toggle" style="margin-bottom:8px;">
       <button class="mode-btn active-manual" id="btn-ot-bracket" onclick="setOrderMode('bracket')">Bracket</button>
       <div class="mode-divider"></div>
@@ -1617,11 +1628,11 @@ async function loadWatchlistQueue() {
     const data = await r.json();
     if (!data.setups?.length) return;
     parsedSetups = data.setups.map(s => ({ ...s, status: 'pending', schwabStatus: 'pending' }));
-    // Apply extension settings if present so trade size matches what was configured there
-    if (data.maxDollars)  { localStorage.setItem('maxDollars',  data.maxDollars);  document.getElementById('s-maxDollars').value  = data.maxDollars; }
-    if (data.stopLossPct) { localStorage.setItem('stopLossPct', data.stopLossPct); document.getElementById('s-stopLossPct').value = data.stopLossPct; }
+    // Apply extension settings into the watchlist inputs
+    if (data.maxDollars)  document.getElementById('wl-maxDollars').value  = data.maxDollars;
+    if (data.stopLossPct) document.getElementById('wl-stopLossPct').value = data.stopLossPct;
     if (data.orderMode)   setOrderMode(data.orderMode);
-    if (data.trailPct)    { localStorage.setItem('trailPct', data.trailPct); const el = document.getElementById('trailPct'); if (el) el.value = data.trailPct; }
+    if (data.trailPct)    { const el = document.getElementById('trailPct'); if (el) el.value = data.trailPct; }
     document.getElementById('setups-section').style.display = '';
     document.getElementById('parse-msg').innerHTML =
       `<div class="msg msg-ok">📥 ${parsedSetups.length} setup(s) loaded from extension scan — auto-trade was off</div>`;
@@ -1692,11 +1703,21 @@ async function parseWatchlist() {
   }
 }
 
+function getWlDollars() { return parseFloat(document.getElementById('wl-maxDollars')?.value) || 10000; }
+function getWlSlPct()   { return parseFloat(document.getElementById('wl-stopLossPct')?.value) || 3; }
+
+function calcSLWl(trigger, dir) {
+  const pct = getWlSlPct() / 100;
+  return dir === 'bull' ? round2(trigger * (1 - pct)) : round2(trigger * (1 + pct));
+}
+
 function renderSetups() {
   const el = document.getElementById('setups-list');
   if (!parsedSetups.length) { el.innerHTML = '<div class="empty">No setups</div>'; return; }
+  const dollars = getWlDollars();
   el.innerHTML = parsedSetups.map((s, i) => {
-    const sl = calcSL(s.trigger, s.direction);
+    const sl = calcSLWl(s.trigger, s.direction);
+    const qty = Math.max(1, Math.floor(dollars / s.trigger));
     const sb = s.status==='placed'?'badge-active':s.status==='error'?'badge-loss':'badge-pending';
     const sl2 = s.status==='placed'?'✓ Placed':s.status==='error'?'✗ Error':'Pending';
     const show = s.status !== 'placed' && wlMode === 'manual';
@@ -1709,7 +1730,7 @@ function renderSetups() {
         <span class="badge ${s.direction==='bull'?'badge-bull':'badge-bear'}">${s.direction==='bull'?'▲ Bull':'▼ Bear'}</span>
         ${acctLabel}
       </div>
-      <span class="detail">@ $${s.trigger}<br/><span class="tgt">TP $${s.targets[0]}</span> · <span class="sl">SL $${sl}</span></span>
+      <span class="detail">@ $${s.trigger} · <span style="color:var(--muted);font-size:11px;">${qty} sh</span><br/><span class="tgt">TP $${s.targets[0]}</span> · <span class="sl">SL $${sl}</span></span>
       <span class="badge ${sb}">${sl2}</span>
       ${show
         ? `<div style="display:flex;gap:5px;flex-wrap:wrap;">
@@ -1730,7 +1751,7 @@ async function submitBracket(s) {
     headers: { 'Content-Type':'application/json', 'x-webhook-secret':'alpaca-secret-jeff-2020' },
     body: JSON.stringify({
       symbol: s.symbol, direction: s.direction, trigger: s.trigger, targets: s.targets,
-      maxDollars: settings.maxDollars, stopLossPct: settings.stopLossPct,
+      maxDollars: getWlDollars(), stopLossPct: getWlSlPct(),
       mode: orderMode,
       trailPct: parseFloat(document.getElementById('trailPct')?.value) || settings.trailPct
     })
@@ -1888,6 +1909,9 @@ if (savedSumDate) {
 }
 loadMetrics();
 setInterval(loadMetrics, 60000);
+// Init watchlist inputs from localStorage
+const _wlD = localStorage.getItem('maxDollars'); if (_wlD) document.getElementById('wl-maxDollars').value = _wlD;
+const _wlS = localStorage.getItem('stopLossPct'); if (_wlS) document.getElementById('wl-stopLossPct').value = _wlS;
 showTab(localStorage.getItem('activeTab') || 'dashboard');
 </script>
 </body>
