@@ -205,14 +205,14 @@ app.get('/api/order-metadata', (req, res) => {
 });
 
 // ── Watchlist queue (setups detected when auto-trade is off) ───────────────────
-let watchlistQueue = [];
+let watchlistQueue = { setups: [], maxDollars: null, stopLossPct: null, orderMode: null, trailPct: null };
 
 app.post('/api/watchlist-queue', (req, res) => {
   const secret = process.env.WEBHOOK_SECRET;
   if (secret && req.headers['x-webhook-secret'] !== secret) return res.status(401).json({ error: 'Unauthorized' });
-  const { setups } = req.body;
+  const { setups, maxDollars, stopLossPct, orderMode, trailPct } = req.body;
   if (!Array.isArray(setups)) return res.status(400).json({ error: 'setups array required' });
-  watchlistQueue = setups;
+  watchlistQueue = { setups, maxDollars, stopLossPct, orderMode, trailPct };
   console.log(`[Watchlist] Extension pushed ${setups.length} setup(s) — auto-trade was off`);
   res.json({ ok: true, count: setups.length });
 });
@@ -222,7 +222,7 @@ app.get('/api/watchlist-queue', (req, res) => {
 });
 
 app.delete('/api/watchlist-queue', (req, res) => {
-  watchlistQueue = [];
+  watchlistQueue = { setups: [], maxDollars: null, stopLossPct: null, orderMode: null, trailPct: null };
   res.json({ ok: true });
 });
 

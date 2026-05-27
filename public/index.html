@@ -1617,6 +1617,11 @@ async function loadWatchlistQueue() {
     const data = await r.json();
     if (!data.setups?.length) return;
     parsedSetups = data.setups.map(s => ({ ...s, status: 'pending', schwabStatus: 'pending' }));
+    // Apply extension settings if present so trade size matches what was configured there
+    if (data.maxDollars)  { localStorage.setItem('maxDollars',  data.maxDollars);  document.getElementById('s-maxDollars').value  = data.maxDollars; }
+    if (data.stopLossPct) { localStorage.setItem('stopLossPct', data.stopLossPct); document.getElementById('s-stopLossPct').value = data.stopLossPct; }
+    if (data.orderMode)   setOrderMode(data.orderMode);
+    if (data.trailPct)    { localStorage.setItem('trailPct', data.trailPct); const el = document.getElementById('trailPct'); if (el) el.value = data.trailPct; }
     document.getElementById('setups-section').style.display = '';
     document.getElementById('parse-msg').innerHTML =
       `<div class="msg msg-ok">📥 ${parsedSetups.length} setup(s) loaded from extension scan — auto-trade was off</div>`;
