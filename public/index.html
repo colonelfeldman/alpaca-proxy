@@ -676,6 +676,11 @@ button{cursor:pointer;font-family:var(--font);}
       </div>
     </div>
 
+    <div id="wl-queue-banner" style="display:none;background:rgba(74,222,128,0.1);border:1px solid rgba(74,222,128,0.3);border-radius:8px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <span id="wl-queue-msg" style="font-size:13px;color:var(--accent);"></span>
+      <button class="btn-primary btn" style="margin-top:0;white-space:nowrap;" onclick="loadWatchlistQueue()">Load setups</button>
+    </div>
+
     <div class="card">
       <div class="settings-label">Watchlist text</div>
       <textarea id="watchlistInput" placeholder="INTC Bullish above 85 (TGT 85.50, 86, 86.85)&#10;AMD Bearish below 335 (TGT 332.50, 330, 326.02)"></textarea>
@@ -1626,6 +1631,7 @@ async function loadWatchlistQueue() {
   try {
     const r = await fetch('/api/watchlist-queue');
     const data = await r.json();
+    document.getElementById('wl-queue-banner').style.display = 'none';
     if (!data.setups?.length) return;
     parsedSetups = data.setups.map(s => ({ ...s, status: 'pending', schwabStatus: 'pending' }));
     // Apply extension settings into the watchlist inputs
@@ -1635,14 +1641,31 @@ async function loadWatchlistQueue() {
     if (data.trailPct)    { const el = document.getElementById('trailPct'); if (el) el.value = data.trailPct; }
     document.getElementById('setups-section').style.display = '';
     document.getElementById('parse-msg').innerHTML =
-      `<div class="msg msg-ok">📥 ${parsedSetups.length} setup(s) loaded from extension scan — auto-trade was off</div>`;
+      `<div class="msg msg-ok">📥 ${parsedSetups.length} setup(s) loaded from extension scan</div>`;
     renderSetups();
-    // Clear the queue so it doesn't reload stale data on next tab open
     fetch('/api/watchlist-queue', { method: 'DELETE' });
   } catch (e) {
     console.warn('Watchlist queue load failed:', e.message);
   }
 }
+
+// Poll for new extension scans while the Watchlist tab is open
+async function pollWatchlistQueue() {
+  if (activeTab !== 'watchlist') return;
+  try {
+    const r = await fetch('/api/watchlist-queue');
+    const data = await r.json();
+    const banner = document.getElementById('wl-queue-banner');
+    if (data.setups?.length) {
+      document.getElementById('wl-queue-msg').textContent =
+        `Extension scan ready — ${data.setups.length} setup(s) waiting`;
+      banner.style.display = 'flex';
+    } else {
+      banner.style.display = 'none';
+    }
+  } catch (e) {}
+}
+setInterval(pollWatchlistQueue, 4000);
 
 function calcSL(trigger, dir) {
   const pct = parseFloat(document.getElementById('s-stopLossPct')?.value || localStorage.getItem('stopLossPct') || '3') / 100 || 0.03;
