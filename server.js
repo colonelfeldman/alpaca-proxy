@@ -896,7 +896,25 @@ function buildTradeMessage(order, label, ctx = {}) {
   return lines.join('\n');
 }
 
+async function sendNtfy(text, opts = {}) {
+  const topic = process.env.NTFY_TOPIC;
+  if (!topic) return;
+  const token = process.env.NTFY_TOKEN;
+  const lines = text.split('\n').filter(Boolean);
+  const headers = {
+    'Content-Type': 'text/plain',
+    'Priority': 'high',
+  };
+  if (lines.length > 1) headers['Title'] = lines[0].replace(/[^\w\s$@.·|%+\-▲▼]/g, '').trim();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const r = await fetch(`https://ntfy.sh/${topic}`, { method: 'POST', headers, body: text });
+  if (!r.ok) throw new Error(`ntfy ${r.status}`);
+}
+
 async function sendTelegram(text, opts = {}) {
+  // Fire ntfy in parallel — failures don't block or affect Telegram
+  sendNtfy(text, opts).catch(e => console.error('ntfy error:', e.message));
+
   const token  = opts.live ? TELEGRAM_LIVE_TOKEN  : TELEGRAM_TOKEN;
   const chatId = opts.live ? TELEGRAM_LIVE_CHAT_ID : TELEGRAM_CHAT_ID;
   if (opts.live && (!token || !chatId)) return;
