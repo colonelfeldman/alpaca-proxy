@@ -520,11 +520,22 @@ button{cursor:pointer;font-family:var(--font);}
           <button class="dash-tab" id="tab-closed" onclick="setDashView('closed')">Closed <span class="tab-count" id="tc-closed">0</span></button>
         </div>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+          <button class="btn-refresh" id="btn-premarket" onclick="runPremarketSnapshot()" title="Check current price vs trigger for all open orders">🔍 Premarket Check</button>
           <input type="date" id="dash-date" onchange="refreshDashboard()"/>
           <button class="btn-refresh" onclick="refreshDashboard()">↻ Refresh</button>
         </div>
       </div>
     </div>
+    <!-- Premarket snapshot results (hidden until button clicked) -->
+    <div id="premarket-panel" style="display:none;margin-bottom:1rem;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+        <span style="font-size:13px;font-weight:600;">Premarket Snapshot</span>
+        <span id="premarket-meta" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
+        <button onclick="document.getElementById('premarket-panel').style.display='none'" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;">×</button>
+      </div>
+      <div id="premarket-rows"></div>
+    </div>
+
     <div class="table-wrap">
       <table class="trades-table">
         <thead>
@@ -1937,6 +1948,49 @@ setInterval(loadMetrics, 60000);
 const _wlD = localStorage.getItem('maxDollars'); if (_wlD) document.getElementById('wl-maxDollars').value = _wlD;
 const _wlS = localStorage.getItem('stopLossPct'); if (_wlS) document.getElementById('wl-stopLossPct').value = _wlS;
 showTab(localStorage.getItem('activeTab') || 'dashboard');
+
+async function runPremarketSnapshot() {
+  const btn = document.getElementById('btn-premarket');
+  const panel = document.getElementById('premarket-panel');
+  const meta = document.getElementById('premarket-meta');
+  const rows = document.getElementById('premarket-rows');
+  btn.disabled = true;
+  btn.textContent = '⏳ Checking...';
+  panel.style.display = 'block';
+  rows.innerHTML = '<span style="color:var(--muted);font-size:13px;">Fetching prices...</span>';
+  try {
+    const r = await fetch('/premarket-snapshot');
+    const d = await r.json();
+    if (!r.ok || !d.ok) { rows.innerHTML = `<span style="color:var(--red);font-size:13px;">Error: ${d.error || 'Unknown error'}</span>`; return; }
+    if (d.message) { rows.innerHTML = `<span style="color:var(--muted);font-size:13px;">${d.message}</span>`; return; }
+    const asOf = new Date(d.asOf).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    meta.textContent = `feed: ${d.feed} · ${asOf} ET`;
+    rows.innerHTML = d.trades.map(t => {
+      const priceStr = t.currentPrice != null ? `$${t.currentPrice.toFixed(2)}` : 'no data';
+      const triggerStr = `$${t.trigger.toFixed(2)}`;
+      const cancelBadge = t.wouldCancel
+        ? `<span style="background:rgba(248,113,113,.15);color:var(--red);border:1px solid rgba(248,113,113,.3);border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;">WOULD CANCEL</span>`
+        : t.status === 'no-price'
+          ? `<span style="background:rgba(251,191,36,.1);color:var(--amber);border:1px solid rgba(251,191,36,.25);border-radius:4px;padding:2px 7px;font-size:11px;">NO PRICE</span>`
+          : `<span style="background:rgba(74,222,128,.1);color:var(--green);border:1px solid rgba(74,222,128,.25);border-radius:4px;padding:2px 7px;font-size:11px;">OK</span>`;
+      const dirColor = t.direction === 'bull' ? 'var(--green)' : 'var(--red)';
+      const acctColor = t.account === 'LIVE' ? 'var(--red)' : 'var(--muted)';
+      return `<div style="display:flex;align-items:center;gap:12px;padding:7px 0;border-bottom:1px solid var(--border);">
+        <span style="font-weight:600;font-size:13px;width:52px;">${t.symbol}</span>
+        <span style="font-size:11px;color:${dirColor};width:30px;">${t.direction.toUpperCase()}</span>
+        <span style="font-size:11px;color:${acctColor};width:34px;">${t.account}</span>
+        <span style="font-size:12px;font-family:var(--mono);">trigger ${triggerStr}</span>
+        <span style="font-size:12px;font-family:var(--mono);color:${t.wouldCancel ? 'var(--red)' : 'var(--text)'};">now ${priceStr}</span>
+        <span style="margin-left:auto;">${cancelBadge}</span>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    rows.innerHTML = `<span style="color:var(--red);font-size:13px;">Error: ${e.message}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 Premarket Check';
+  }
+}
 </script>
 </body>
 </html>

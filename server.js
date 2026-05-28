@@ -1542,6 +1542,82 @@ app.post('/market-open-filter', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Premarket snapshot ─────────────────────────────────────────────────────────
+// Fetches open stop-limit orders from all Alpaca accounts and checks current
+// premarket price vs trigger. Used to preview what the market-open filter will do.
+app.get('/premarket-snapshot', async (req, res) => {
+  try {
+    const accounts = [
+      { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL', baseUrl: ALPACA_BASE,      isLive: false },
+      { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR', baseUrl: ALPACA_BASE,      isLive: false },
+      { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'LIVE', baseUrl: ALPACA_LIVE_BASE, isLive: true  },
+    ].filter(a => a.key && a.secret);
+
+    // Gather all open stop-limit entry orders across all accounts
+    const allEntries = [];
+    for (const acct of accounts) {
+      const headers = { 'APCA-API-KEY-ID': acct.key, 'APCA-API-SECRET-KEY': acct.secret };
+      const r = await fetch(`${acct.baseUrl}/orders?status=open&limit=200`, { headers });
+      if (!r.ok) continue;
+      const orders = await r.json();
+      const stopEntries = orders.filter(o =>
+        o.stop_price && parseFloat(o.stop_price) > 0 &&
+        (o.type === 'stop_limit' || o.type === 'stop')
+      );
+      stopEntries.forEach(o => allEntries.push({ ...o, _acct: acct.label, _isLive: acct.isLive }));
+    }
+
+    if (!allEntries.length) {
+      return res.json({ ok: true, message: 'No open stop-limit orders found across any account.', trades: [] });
+    }
+
+    const symbols = [...new Set(allEntries.map(o => o.symbol))];
+
+    // Fetch snapshots — try SIP feed first (live account), fall back to default
+    let feedUsed = 'sip';
+    let snapData;
+    const dataHeaders = { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET };
+    const sipRes = await fetch(`${ALPACA_DATA_BASE}/stocks/snapshots?symbols=${symbols.join(',')}&feed=sip`, { headers: dataHeaders });
+    if (sipRes.ok) {
+      snapData = await sipRes.json();
+    } else {
+      feedUsed = 'iex';
+      const iexRes = await fetch(`${ALPACA_DATA_BASE}/stocks/snapshots?symbols=${symbols.join(',')}`, { headers: dataHeaders });
+      if (!iexRes.ok) throw new Error(`Snapshot fetch failed: ${iexRes.status}`);
+      snapData = await iexRes.json();
+    }
+
+    const results = allEntries.map(order => {
+      const snap = snapData[order.symbol];
+      const currentPrice = snap?.latestTrade?.p ?? snap?.latestQuote?.ap ?? null;
+      const trigger = parseFloat(order.stop_price);
+      const isBull = order.side === 'buy';
+
+      let wouldCancel = false;
+      let status = 'ok';
+      if (currentPrice) {
+        if (isBull && currentPrice >= trigger) { wouldCancel = true; status = 'cancel'; }
+        else if (!isBull && currentPrice <= trigger) { wouldCancel = true; status = 'cancel'; }
+      } else {
+        status = 'no-price';
+      }
+
+      return {
+        account: order._acct,
+        symbol: order.symbol,
+        direction: isBull ? 'bull' : 'ss',
+        trigger,
+        currentPrice,
+        priceAge: snap?.latestTrade?.t ?? null,
+        wouldCancel,
+        status,
+      };
+    });
+
+    res.json({ ok: true, feed: feedUsed, asOf: new Date().toISOString(), trades: results });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/db/sync-exits', async (req, res) => {
   try {
     const date = req.query.date || null;
