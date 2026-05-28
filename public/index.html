@@ -521,6 +521,7 @@ button{cursor:pointer;font-family:var(--font);}
         </div>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
           <button class="btn-refresh" id="btn-premarket" onclick="runPremarketSnapshot()" title="Check current price vs trigger for all open orders">🔍 Premarket Check</button>
+          <button class="btn-refresh" id="btn-compare" onclick="runPremarketComparison()" title="Compare premarket snapshot vs actual open and outcomes">📊 Compare</button>
           <input type="date" id="dash-date" onchange="refreshDashboard()"/>
           <button class="btn-refresh" onclick="refreshDashboard()">↻ Refresh</button>
         </div>
@@ -534,6 +535,34 @@ button{cursor:pointer;font-family:var(--font);}
         <button onclick="document.getElementById('premarket-panel').style.display='none'" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;">×</button>
       </div>
       <div id="premarket-rows"></div>
+    </div>
+
+    <!-- Premarket comparison panel -->
+    <div id="compare-panel" style="display:none;margin-bottom:1rem;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+        <span style="font-size:13px;font-weight:600;">Premarket vs Open Comparison</span>
+        <span id="compare-meta" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
+        <button onclick="document.getElementById('compare-panel').style.display='none'" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;">×</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="color:var(--muted);text-align:left;border-bottom:1px solid var(--border);">
+              <th style="padding:4px 10px 6px 0;">Symbol</th>
+              <th style="padding:4px 10px 6px 0;">Dir</th>
+              <th style="padding:4px 10px 6px 0;">Acct</th>
+              <th style="padding:4px 10px 6px 0;">Trigger</th>
+              <th style="padding:4px 10px 6px 0;">Premarket $</th>
+              <th style="padding:4px 10px 6px 0;">Open $</th>
+              <th style="padding:4px 10px 6px 0;">Pre Called</th>
+              <th style="padding:4px 10px 6px 0;">Outcome</th>
+              <th style="padding:4px 10px 6px 0;">Fill $</th>
+              <th style="padding:4px 10px 6px 0;">Prediction</th>
+            </tr>
+          </thead>
+          <tbody id="compare-tbody"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="table-wrap">
@@ -1948,6 +1977,85 @@ setInterval(loadMetrics, 60000);
 const _wlD = localStorage.getItem('maxDollars'); if (_wlD) document.getElementById('wl-maxDollars').value = _wlD;
 const _wlS = localStorage.getItem('stopLossPct'); if (_wlS) document.getElementById('wl-stopLossPct').value = _wlS;
 showTab(localStorage.getItem('activeTab') || 'dashboard');
+
+async function runPremarketComparison() {
+  const btn = document.getElementById('btn-compare');
+  const panel = document.getElementById('compare-panel');
+  const meta = document.getElementById('compare-meta');
+  const tbody = document.getElementById('compare-tbody');
+  btn.disabled = true;
+  btn.textContent = '⏳ Loading...';
+  panel.style.display = 'block';
+  tbody.innerHTML = '<tr><td colspan="10" style="color:var(--muted);padding:10px 0;">Fetching data...</td></tr>';
+
+  // Pass the currently selected dashboard date if set
+  const dateInput = document.getElementById('dash-date');
+  const qs = dateInput?.value ? `?date=${dateInput.value}` : '';
+
+  try {
+    const r = await fetch(`/premarket-comparison${qs}`);
+    const d = await r.json();
+    if (!r.ok || !d.ok) {
+      tbody.innerHTML = `<tr><td colspan="10" style="color:var(--red);">Error: ${d.error || 'Unknown'}</td></tr>`;
+      return;
+    }
+    if (d.message) {
+      tbody.innerHTML = `<tr><td colspan="10" style="color:var(--muted);padding:10px 0;">${d.message}</td></tr>`;
+      return;
+    }
+
+    meta.textContent = `date: ${d.date}`;
+
+    tbody.innerHTML = d.rows.map(row => {
+      const dirColor = row.direction === 'bull' ? 'var(--green)' : 'var(--red)';
+      const dirLabel = row.direction === 'bull' ? 'BULL' : 'SS';
+      const acctColor = row.account === 'LIVE' ? 'var(--red)' : 'var(--muted)';
+
+      const pre$ = row.premarketPrice != null ? `$${row.premarketPrice.toFixed(2)}` : '—';
+      const open$ = row.openPrice != null ? `$${row.openPrice.toFixed(2)}` : '—';
+      const fill$ = row.fillPrice != null ? `$${row.fillPrice.toFixed(2)}` : '—';
+      const trigger$ = `$${row.trigger.toFixed(2)}`;
+
+      const calledBadge = row.premarketWouldCancel
+        ? `<span style="color:var(--red);font-weight:600;">CANCEL</span>`
+        : `<span style="color:var(--muted);">keep</span>`;
+
+      let outcomeBadge = `<span style="color:var(--muted);">${row.outcome}</span>`;
+      if (row.outcome === 'filled')    outcomeBadge = `<span style="color:var(--green);font-weight:600;">filled</span>`;
+      if (row.outcome === 'cancelled') outcomeBadge = `<span style="color:var(--amber);font-weight:600;">cancelled</span>`;
+      if (row.outcome === 'pending')   outcomeBadge = `<span style="color:var(--cyan);">pending</span>`;
+
+      let predBadge = '—';
+      if (row.predictionCorrect === true)  predBadge = `<span style="color:var(--green);">✓ correct</span>`;
+      if (row.predictionCorrect === false) predBadge = `<span style="color:var(--red);">✗ missed</span>`;
+
+      // Highlight row if premarket said cancel but it filled anyway (the INTC scenario)
+      const rowStyle = (!row.premarketWouldCancel && row.outcome === 'filled' && row.openPrice && (
+        (row.direction === 'bull' && row.openPrice >= row.trigger) ||
+        (row.direction === 'bear' && row.openPrice <= row.trigger)
+      )) ? 'background:rgba(248,113,113,.06);' : '';
+
+      return `<tr style="${rowStyle}">
+        <td style="padding:6px 10px 6px 0;font-weight:600;">${row.symbol}</td>
+        <td style="padding:6px 10px 6px 0;color:${dirColor};">${dirLabel}</td>
+        <td style="padding:6px 10px 6px 0;color:${acctColor};">${row.account}</td>
+        <td style="padding:6px 10px 6px 0;font-family:var(--mono);">${trigger$}</td>
+        <td style="padding:6px 10px 6px 0;font-family:var(--mono);">${pre$}</td>
+        <td style="padding:6px 10px 6px 0;font-family:var(--mono);">${open$}</td>
+        <td style="padding:6px 10px 6px 0;">${calledBadge}</td>
+        <td style="padding:6px 10px 6px 0;">${outcomeBadge}</td>
+        <td style="padding:6px 10px 6px 0;font-family:var(--mono);">${fill$}</td>
+        <td style="padding:6px 10px 6px 0;">${predBadge}</td>
+      </tr>`;
+    }).join('');
+
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="10" style="color:var(--red);">Error: ${e.message}</td></tr>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📊 Compare';
+  }
+}
 
 async function runPremarketSnapshot() {
   const btn = document.getElementById('btn-premarket');

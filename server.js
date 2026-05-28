@@ -70,6 +70,42 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value 
 // Prevents two extension instances from placing the same setup twice on the same day
 try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_setup_daily ON parsed_setups(date, symbol, direction, trigger_price)`); } catch(e) {}
 try { db.exec(`ALTER TABLE trades ADD COLUMN environment TEXT DEFAULT 'paper'`); } catch(e) {}
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS premarket_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    account TEXT NOT NULL,
+    trigger_price REAL,
+    premarket_price REAL,
+    premarket_time TEXT,
+    would_cancel INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`); } catch(e) {}
+
+// Seed today's premarket snapshot data captured from the UI screenshot (2026-05-28)
+try {
+  const _seedDate = '2026-05-28';
+  const _existing = db.prepare(`SELECT COUNT(*) as n FROM premarket_snapshots WHERE date = ?`).get(_seedDate);
+  if (_existing.n === 0) {
+    const _ins = db.prepare(`INSERT INTO premarket_snapshots (date,symbol,direction,account,trigger_price,premarket_price,would_cancel) VALUES (?,?,?,?,?,?,?)`);
+    const _rows = [
+      ['QBTS','bear','BEAR',26.50,27.17,0], ['CRWV','bear','BEAR',104.75,107.35,0],
+      ['ASTS','bear','BEAR',123.00,125.40,0], ['IBIT','bear','BEAR',41.40,41.35,1],
+      ['MRVL','bear','BEAR',190.00,207.22,0], ['NOW','bear','BEAR',102.00,106.47,0],
+      ['SLV','bear','BEAR',66.00,66.68,0],   ['RDW','bear','BEAR',22.00,23.97,0],
+      ['QBTS','bull','LIVE',28.20,27.17,0],  ['CRWV','bull','LIVE',107.00,107.35,1],
+      ['DELL','bull','LIVE',320.00,317.09,0], ['ASTS','bull','LIVE',127.50,125.40,0],
+      ['IBIT','bull','LIVE',41.75,41.35,0],  ['MRVL','bull','LIVE',197.50,207.22,1],
+      ['NOW','bull','LIVE',109.25,106.47,0],  ['SLV','bull','LIVE',67.00,66.68,0],
+      ['RDW','bull','LIVE',24.00,23.97,0],
+    ];
+    for (const r of _rows) _ins.run(_seedDate, ...r);
+    console.log(`[PremarketSnapshot] Seeded ${_rows.length} records for ${_seedDate}`);
+  }
+} catch(e) { console.error('[PremarketSnapshot] seed error:', e.message); }
 
 function getSetting(key, defaultVal) {
   const row = db.prepare('SELECT value FROM settings WHERE key=?').get(key);
@@ -1587,11 +1623,20 @@ app.get('/premarket-snapshot', async (req, res) => {
       snapData = await iexRes.json();
     }
 
+    const today = dateET();
+    const upsertSnap = db.prepare(`
+      INSERT INTO premarket_snapshots (date, symbol, direction, account, trigger_price, premarket_price, premarket_time, would_cancel)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT DO NOTHING
+    `);
+
     const results = allEntries.map(order => {
       const snap = snapData[order.symbol];
       const currentPrice = snap?.latestTrade?.p ?? snap?.latestQuote?.ap ?? null;
+      const priceTime = snap?.latestTrade?.t ?? null;
       const trigger = parseFloat(order.stop_price);
       const isBull = order.side === 'buy';
+      const directionStored = isBull ? 'bull' : 'bear';
 
       let wouldCancel = false;
       let status = 'ok';
@@ -1602,19 +1647,98 @@ app.get('/premarket-snapshot', async (req, res) => {
         status = 'no-price';
       }
 
+      // Save to DB for later comparison (ignore duplicates)
+      try {
+        upsertSnap.run(today, order.symbol, directionStored, order._acct, trigger, currentPrice, priceTime, wouldCancel ? 1 : 0);
+      } catch(e) {}
+
       return {
         account: order._acct,
         symbol: order.symbol,
         direction: isBull ? 'bull' : 'ss',
         trigger,
         currentPrice,
-        priceAge: snap?.latestTrade?.t ?? null,
+        priceAge: priceTime,
         wouldCancel,
         status,
       };
     });
 
     res.json({ ok: true, feed: feedUsed, asOf: new Date().toISOString(), trades: results });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Premarket vs open comparison ──────────────────────────────────────────────
+// Joins premarket snapshot prices with actual 9:30 open bar and trade outcomes.
+app.get('/premarket-comparison', async (req, res) => {
+  try {
+    const date = req.query.date || dateET();
+    const snapshots = db.prepare(`SELECT * FROM premarket_snapshots WHERE date = ? ORDER BY account, direction, symbol`).all(date);
+    if (!snapshots.length) {
+      return res.json({ ok: true, message: `No premarket snapshot data for ${date}.`, rows: [] });
+    }
+
+    const symbols = [...new Set(snapshots.map(s => s.symbol))];
+
+    // 9:30 AM ET = 13:30 UTC (EDT). Fetch 1-min bars around open.
+    const barStart = `${date}T13:29:00Z`;
+    const barEnd   = `${date}T13:36:00Z`;
+    const dataHeaders = { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET };
+    let openBars = {};
+    try {
+      const barRes = await fetch(
+        `${ALPACA_DATA_BASE}/stocks/bars?symbols=${symbols.join(',')}&timeframe=1Min&start=${barStart}&end=${barEnd}&feed=sip`,
+        { headers: dataHeaders }
+      );
+      if (barRes.ok) {
+        const barData = await barRes.json();
+        for (const sym of symbols) {
+          const bars = barData.bars?.[sym];
+          if (bars?.length) openBars[sym] = { open: bars[0].o, high: bars[0].h, low: bars[0].l, time: bars[0].t };
+        }
+      }
+    } catch(e) { console.warn('[PremarketComparison] bar fetch error:', e.message); }
+
+    // Get today's trade outcomes from DB
+    const trades = db.prepare(`SELECT * FROM trades WHERE date(created_at) = ?`).all(date);
+
+    const rows = snapshots.map(snap => {
+      const bar = openBars[snap.symbol];
+      const openPrice = bar?.open ?? null;
+
+      // Match trade: same symbol + direction, LIVE account → environment='live'
+      const trade = trades.find(t =>
+        t.symbol === snap.symbol &&
+        t.direction === snap.direction &&
+        (snap.account === 'LIVE' ? t.environment === 'live' : t.environment !== 'live')
+      );
+
+      const outcome  = trade?.status ?? 'not found';
+      const fillPrice = (trade?.status === 'filled') ? trade.entry_price : null;
+
+      // Did the filter correctly predict what would happen?
+      const filterCancelledIt = outcome === 'cancelled';
+      const prediction = snap.would_cancel ? 'cancel' : 'keep';
+      const actual     = filterCancelledIt ? 'cancel' : (outcome === 'filled' ? 'filled' : outcome);
+      const predictionCorrect = (prediction === 'cancel' && filterCancelledIt) || (prediction === 'keep' && !filterCancelledIt);
+
+      return {
+        symbol: snap.symbol,
+        direction: snap.direction,
+        account: snap.account,
+        trigger: snap.trigger_price,
+        premarketPrice: snap.premarket_price,
+        premarketWouldCancel: !!snap.would_cancel,
+        openPrice,
+        openHigh: bar?.high ?? null,
+        openLow: bar?.low ?? null,
+        outcome,
+        fillPrice,
+        predictionCorrect: outcome === 'not found' ? null : predictionCorrect,
+      };
+    });
+
+    res.json({ ok: true, date, rows });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
