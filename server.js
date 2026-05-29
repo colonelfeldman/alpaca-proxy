@@ -609,13 +609,21 @@ app.get('/held-trades', async (req, res) => {
     const liveSecret = process.env.ALPACA_LIVE_SECRET || process.env.ALPACA_SECRET;
     const dataHeaders = { 'APCA-API-KEY-ID': liveKey, 'APCA-API-SECRET-KEY': liveSecret };
     let prices = {};
-    try {
-      const pr = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=sip`, { headers: dataHeaders });
-      if (pr.ok) {
-        const pd = await pr.json();
-        for (const sym of symbols) prices[sym] = parseFloat(pd.trades?.[sym]?.p) || null;
+    const fetchPrices = async (feed) => {
+      const pr = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=${feed}`, { headers: dataHeaders });
+      if (!pr.ok) { console.warn('[HeldTrades] price fetch failed, feed='+feed, pr.status); return false; }
+      const pd = await pr.json();
+      let gotAny = false;
+      for (const sym of symbols) {
+        const p = parseFloat(pd.trades?.[sym]?.p);
+        if (p > 0) { prices[sym] = p; gotAny = true; }
       }
-    } catch(e) {}
+      return gotAny;
+    };
+    try {
+      const ok = await fetchPrices('sip');
+      if (!ok) await fetchPrices('iex');
+    } catch(e) { console.warn('[HeldTrades] price fetch error:', e.message); }
 
     const trades = held.map(t => {
       const currentPrice = prices[t.symbol] ?? null;
