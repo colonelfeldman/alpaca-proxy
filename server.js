@@ -605,7 +605,9 @@ app.get('/held-trades', async (req, res) => {
     if (!held.length) return res.json({ ok: true, trades: [] });
 
     const symbols = [...new Set(held.map(t => t.symbol))];
-    const dataHeaders = { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET };
+    const liveKey = process.env.ALPACA_LIVE_KEY || process.env.ALPACA_KEY;
+    const liveSecret = process.env.ALPACA_LIVE_SECRET || process.env.ALPACA_SECRET;
+    const dataHeaders = { 'APCA-API-KEY-ID': liveKey, 'APCA-API-SECRET-KEY': liveSecret };
     let prices = {};
     try {
       const pr = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=sip`, { headers: dataHeaders });
