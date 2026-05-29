@@ -1145,7 +1145,7 @@ async function refreshLive() {
           ${t.entry_time_et ? `<div style="font-size:11px;color:var(--muted);font-family:var(--mono);">${t.entry_time_et}</div>` : ''}
           <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
             ${isPending && t.alpaca_order_id ? `<button class="btn-cancel-ord" onclick="dashCancelOrder('${t.alpaca_order_id}','live')">Cancel Order</button>` : ''}
-            ${t.status === 'filled' ? `<button class="btn-refresh" style="font-size:12px;padding:4px 9px;" onclick="openTradeChart('${t.symbol}','bull','${t.created_at?.slice(0,10)}')">📈 Chart</button>` : ''}
+            ${t.status !== 'cancelled' ? `<button class="btn-refresh" style="font-size:12px;padding:4px 9px;" onclick="openTradeChart('${t.symbol}','bull','${t.created_at?.slice(0,10)}')">📈 Chart</button>` : ''}
           </div>
         </div>
         ${isClosed && t.total_pnl != null ? `<div class="pnl-banner ${t.total_pnl >= 0 ? 'win' : 'loss'}"><span>${t.exit_reason}</span><span>${t.total_pnl >= 0 ? '+' : ''}$${t.total_pnl.toFixed(2)} (${t.total_pct != null ? (t.total_pct >= 0 ? '+' : '') + t.total_pct.toFixed(2) + '%' : ''})</span></div>` : ''}
