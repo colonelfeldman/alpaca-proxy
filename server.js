@@ -1742,6 +1742,34 @@ app.get('/premarket-comparison', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Trade chart data ──────────────────────────────────────────────────────────
+// Returns DB trade record + 1-minute Alpaca bars for a full session day chart.
+app.get('/trade-chart-data', async (req, res) => {
+  try {
+    const { symbol, date, direction } = req.query;
+    if (!symbol || !date) return res.status(400).json({ error: 'symbol and date required' });
+    const sym = symbol.toUpperCase();
+    const dir = direction || 'bull';
+
+    // Prefer live trade; fall back to paper
+    const trade =
+      db.prepare(`SELECT * FROM trades WHERE symbol=? AND date(created_at)=? AND direction=? AND environment='live' ORDER BY created_at DESC LIMIT 1`).get(sym, date, dir) ||
+      db.prepare(`SELECT * FROM trades WHERE symbol=? AND date(created_at)=? AND direction=? ORDER BY created_at DESC LIMIT 1`).get(sym, date, dir) ||
+      null;
+
+    // 9:25 AM – 4:05 PM ET in UTC (EDT = UTC-4)
+    const barStart = `${date}T13:25:00Z`;
+    const barEnd   = `${date}T20:05:00Z`;
+    const headers  = { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET };
+    const barRes   = await fetch(`${ALPACA_DATA_BASE}/stocks/bars?symbols=${sym}&timeframe=1Min&start=${barStart}&end=${barEnd}&feed=sip&limit=500`, { headers });
+    const bars     = barRes.ok ? ((await barRes.json()).bars?.[sym] || []) : [];
+
+    const preSnap = db.prepare(`SELECT premarket_price, would_cancel FROM premarket_snapshots WHERE date=? AND symbol=? AND direction=? LIMIT 1`).get(date, sym, dir);
+
+    res.json({ ok: true, symbol: sym, date, trade, bars, premarketPrice: preSnap?.premarket_price ?? null, premarketWouldCancel: preSnap?.would_cancel ?? null });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/db/sync-exits', async (req, res) => {
   try {
     const date = req.query.date || null;
