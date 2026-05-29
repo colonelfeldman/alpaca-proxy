@@ -646,6 +646,17 @@ button{cursor:pointer;font-family:var(--font);}
       <button class="btn-danger btn-sm" onclick="resetTodayLive()">Reset today</button>
     </div>
     <div id="clear-failed-msg"></div>
+
+    <!-- Held Trades — queued for 9:35 AM placement -->
+    <div id="held-trades-section" style="display:none;margin-bottom:1.25rem;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:0.75rem;">
+        <span style="font-size:13px;font-weight:600;color:#fbbf24;">⏸ Held Trades</span>
+        <span style="font-size:11px;color:var(--muted);">Queued for 9:35 AM placement</span>
+        <button class="btn-refresh" style="margin-left:auto;font-size:12px;" onclick="refreshHeldTrades()">↻ Refresh</button>
+      </div>
+      <div id="held-trades-list"></div>
+    </div>
+
     <div class="cards-grid" id="live-cards">
       <div class="empty" style="grid-column:1/-1;">Loading...</div>
     </div>
@@ -878,7 +889,7 @@ function showTab(t) {
   activeTab = t;
   localStorage.setItem('activeTab', t);
   if (t === 'dashboard') refreshDashboard();
-  if (t === 'live')      refreshLive();
+  if (t === 'live')      { refreshLive(); refreshHeldTrades(); }
   if (t === 'summary')   loadSummary();
   if (t === 'orders')    refreshOrders();
   if (t === 'watchlist') loadWatchlistQueue();
@@ -1060,6 +1071,7 @@ async function clearFailedSetups() {
 }
 
 async function refreshLive() {
+  refreshHeldTrades();
   const el = document.getElementById('live-cards');
   el.innerHTML = '<div class="empty" style="grid-column:1/-1;"><span class="spinner"></span>Loading...</div>';
 
@@ -1159,6 +1171,57 @@ async function refreshLive() {
 
     el.innerHTML = rows.join('') || '<div class="empty" style="grid-column:1/-1;">No trades found</div>';
   } catch(e) { el.innerHTML = `<div class="msg msg-err" style="grid-column:1/-1;">${e.message}</div>`; }
+}
+
+async function refreshHeldTrades() {
+  const el = document.getElementById('held-trades-list');
+  const section = document.getElementById('held-trades-section');
+  if (!el || !section) return;
+  try {
+    const r = await fetch('/held-trades');
+    if (!r.ok) { section.style.display = 'none'; return; }
+    const data = await r.json();
+    const trades = data.trades || [];
+    if (!trades.length) { section.style.display = 'none'; el.innerHTML = ''; return; }
+    section.style.display = '';
+    el.innerHTML = trades.map(t => {
+      const isBull = t.direction === 'bull';
+      const gapThrough = t.wouldSkip === true;
+      const borderColor = gapThrough ? 'rgba(248,113,113,.45)' : 'rgba(74,222,128,.2)';
+      const priceColor = t.currentPrice == null ? 'var(--muted)'
+        : (isBull ? t.currentPrice >= t.trigger : t.currentPrice <= t.trigger)
+          ? 'var(--red)' : 'var(--green)';
+      const skipBadge = t.wouldSkip === true
+        ? `<span style="color:var(--red);font-size:11px;white-space:nowrap;">⚠ Would skip</span>`
+        : t.wouldSkip === false
+          ? `<span style="color:var(--green);font-size:11px;white-space:nowrap;">✓ Would place</span>`
+          : '';
+      const t1 = t.targets?.[0];
+      return `<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--card-bg);border-radius:8px;border:1px solid ${borderColor};margin-bottom:8px;flex-wrap:wrap;">
+        <span class="badge ${isBull ? 'badge-bull' : 'badge-bear'}">${isBull ? '▲ LIVE' : '▼ SS'}</span>
+        <span style="font-size:16px;font-weight:700;font-family:var(--mono);">${t.symbol}</span>
+        <div style="display:flex;gap:16px;font-size:12px;flex:1;flex-wrap:wrap;align-items:center;">
+          <span style="color:var(--muted);">Trigger <span style="color:var(--fg);font-family:var(--mono);">$${t.trigger.toFixed(2)}</span></span>
+          ${t.currentPrice != null ? `<span style="color:var(--muted);">Now <span style="color:${priceColor};font-family:var(--mono);font-weight:600;">$${t.currentPrice.toFixed(2)}</span></span>` : '<span style="color:var(--muted);font-size:11px;">price unavailable</span>'}
+          ${t1 != null ? `<span style="color:var(--muted);">T1 <span style="color:var(--green);font-family:var(--mono);">$${t1.toFixed(2)}</span></span>` : ''}
+          ${t.stopLossPct != null ? `<span style="color:var(--muted);">SL <span style="color:var(--red);font-family:var(--mono);">${t.stopLossPct}%</span></span>` : ''}
+          ${skipBadge}
+        </div>
+        <button class="btn-cancel-ord" onclick="cancelHeldTrade(${t.id})">Cancel</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    if (section) section.style.display = 'none';
+  }
+}
+
+async function cancelHeldTrade(id) {
+  if (!confirm('Remove this held trade from the queue?')) return;
+  try {
+    const r = await fetch('/held-trades/' + id, { method: 'DELETE' });
+    if (!r.ok) { const d = await r.json(); alert(d.error || 'Error cancelling held trade'); return; }
+    refreshHeldTrades();
+  } catch(e) { alert(e.message); }
 }
 
 function buildSparkline(symbolBars, current) {

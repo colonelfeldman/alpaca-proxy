@@ -597,6 +597,50 @@ app.post('/alpaca/orders/metadata', (req, res) => {
 });
 
 // ── Trade placement ────────────────────────────────────────────────────────────
+// Returns today's held trades with current market prices
+app.get('/held-trades', async (req, res) => {
+  try {
+    const today = dateET();
+    const held = db.prepare(`SELECT * FROM held_trades WHERE date=? AND status='held' ORDER BY created_at ASC`).all(today);
+    if (!held.length) return res.json({ ok: true, trades: [] });
+
+    const symbols = [...new Set(held.map(t => t.symbol))];
+    const dataHeaders = { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET };
+    let prices = {};
+    try {
+      const pr = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=sip`, { headers: dataHeaders });
+      if (pr.ok) {
+        const pd = await pr.json();
+        for (const sym of symbols) prices[sym] = parseFloat(pd.trades?.[sym]?.p) || null;
+      }
+    } catch(e) {}
+
+    const trades = held.map(t => {
+      const currentPrice = prices[t.symbol] ?? null;
+      const isBull = t.direction === 'bull';
+      const targets = JSON.parse(t.targets);
+      const wouldSkip = currentPrice ? (isBull ? currentPrice >= t.trigger : currentPrice <= t.trigger) : null;
+      return {
+        id: t.id, symbol: t.symbol, direction: t.direction,
+        trigger: t.trigger, targets, currentPrice, wouldSkip,
+        stopLossPct: t.stop_loss_pct, maxDollars: t.max_dollars,
+        createdAt: t.created_at,
+      };
+    });
+
+    res.json({ ok: true, trades });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Cancel a single held trade before 9:35
+app.delete('/held-trades/:id', (req, res) => {
+  try {
+    const info = db.prepare(`UPDATE held_trades SET status='cancelled' WHERE id=? AND status='held'`).run(req.params.id);
+    if (info.changes === 0) return res.status(404).json({ error: 'Not found or already processed' });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/settings/hold-until-935', (req, res) => {
   res.json({ enabled: getSetting('holdUntil935', false) });
 });
