@@ -1870,6 +1870,7 @@ async function cancelStaleOpeningOrders() {
 }
 
 let lastAutoCloseDate  = null;
+let lastOpenFilter928  = null;
 let lastOpenFilter930  = null;
 let lastOpenFilter935  = null;
 
@@ -1886,8 +1887,14 @@ setInterval(() => {
     sendDailySummary();
   }
 
-  // Market open filter — 9:30 AM ET and re-check at 9:35 AM ET
+  // Pre-open filter — 9:28 AM ET (2 min before bell, catches obvious gap-above cases)
+  // Market open filter — 9:30 AM ET (backup for anything that develops in the last 2 min)
+  // Follow-up filter  — 9:35 AM ET (catches any fast-movers that slipped through)
   if (isWeekday) {
+    if (etMinutes >= 9 * 60 + 28 && etMinutes < 9 * 60 + 30 && lastOpenFilter928 !== dateStr) {
+      lastOpenFilter928 = dateStr;
+      cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:28]', e.message));
+    }
     if (etMinutes >= 9 * 60 + 30 && etMinutes < 9 * 60 + 34 && lastOpenFilter930 !== dateStr) {
       lastOpenFilter930 = dateStr;
       cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:30]', e.message));
