@@ -467,6 +467,11 @@ button{cursor:pointer;font-family:var(--font);}
   </div>
   <hr class="settings-divider"/>
   <div class="toggle-row">
+    <span class="toggle-label">Hold orders until 9:35 AM</span>
+    <label class="toggle"><input type="checkbox" id="s-hold935" onchange="saveHold935()"/><span class="toggle-slider"></span></label>
+  </div>
+  <div id="hold935-desc" style="font-size:11px;color:var(--muted);padding:2px 0 8px 0;display:none;">Orders stored locally, placed with Alpaca at 9:35 after opening range settles</div>
+  <div class="toggle-row">
     <span class="toggle-label">Auto-close all positions EOD</span>
     <label class="toggle"><input type="checkbox" id="s-autoclose" onchange="saveAutoClose()"/><span class="toggle-slider"></span></label>
   </div>
@@ -861,7 +866,7 @@ function populateSettingsForm() {
   document.getElementById('s-push').checked     = s.push;
   document.getElementById('s-sound').checked    = s.sound;
 }
-function openSettings()  { document.getElementById('settingsPanel').classList.add('open'); document.getElementById('settingsBackdrop').classList.add('open'); populateSettingsForm(); loadAutoCloseSettings(); }
+function openSettings()  { document.getElementById('settingsPanel').classList.add('open'); document.getElementById('settingsBackdrop').classList.add('open'); populateSettingsForm(); loadAutoCloseSettings(); loadHold935Setting(); }
 function closeSettings() { document.getElementById('settingsPanel').classList.remove('open'); document.getElementById('settingsBackdrop').classList.remove('open'); }
 
 // ── Nav / Tab ──────────────────────────────────────────────────────────────────
@@ -1978,6 +1983,21 @@ async function loadAutoCloseSettings() {
     document.getElementById('s-autoclose').checked = !!d.enabled;
     document.getElementById('s-autoclose-time').value = d.time || '15:50';
     document.getElementById('autoclose-time-row').style.display = d.enabled ? '' : 'none';
+  } catch(e) {}
+}
+
+async function saveHold935() {
+  const enabled = document.getElementById('s-hold935').checked;
+  document.getElementById('hold935-desc').style.display = enabled ? '' : 'none';
+  await fetch('/settings/hold-until-935', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) });
+}
+
+async function loadHold935Setting() {
+  try {
+    const r = await fetch('/settings/hold-until-935');
+    const d = await r.json();
+    document.getElementById('s-hold935').checked = !!d.enabled;
+    document.getElementById('hold935-desc').style.display = d.enabled ? '' : 'none';
   } catch(e) {}
 }
 

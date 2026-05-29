@@ -71,6 +71,22 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value 
 try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_setup_daily ON parsed_setups(date, symbol, direction, trigger_price)`); } catch(e) {}
 try { db.exec(`ALTER TABLE trades ADD COLUMN environment TEXT DEFAULT 'paper'`); } catch(e) {}
 try { db.exec(`
+  CREATE TABLE IF NOT EXISTS held_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    trigger REAL NOT NULL,
+    targets TEXT NOT NULL,
+    max_dollars REAL,
+    stop_loss_pct REAL,
+    mode TEXT DEFAULT 'bracket',
+    trail_pct REAL,
+    status TEXT DEFAULT 'held',
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`); } catch(e) {}
+try { db.exec(`
   CREATE TABLE IF NOT EXISTS premarket_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,
@@ -581,6 +597,87 @@ app.post('/alpaca/orders/metadata', (req, res) => {
 });
 
 // ── Trade placement ────────────────────────────────────────────────────────────
+app.get('/settings/hold-until-935', (req, res) => {
+  res.json({ enabled: getSetting('holdUntil935', false) });
+});
+app.post('/settings/hold-until-935', (req, res) => {
+  const { enabled } = req.body;
+  if (enabled !== undefined) setSetting('holdUntil935', !!enabled);
+  res.json({ ok: true, enabled: getSetting('holdUntil935', false) });
+});
+
+// Shared placement logic — called by /trade (immediate) and placeHeldTrades() (9:35).
+async function executeTradeOrder({ symbol, direction, trigger, targets, maxDollars, stopLossPct, mode, trailPct }) {
+  const isBull = direction === 'bull';
+  const key        = isBull ? process.env.ALPACA_KEY       : process.env.ALPACA_BEAR_KEY;
+  const secret_key = isBull ? process.env.ALPACA_SECRET    : process.env.ALPACA_BEAR_SECRET;
+  const liveKey    = isBull ? process.env.ALPACA_LIVE_KEY  : null;
+  const liveSecret = isBull ? process.env.ALPACA_LIVE_SECRET : null;
+  const hasLive    = !!(isBull && liveKey && liveSecret);
+
+  const dollars = parseFloat(maxDollars) || 10000;
+  const slPct   = parseFloat(stopLossPct) / 100 || 0.03;
+  const qty     = Math.max(1, Math.floor(dollars / trigger));
+  const side    = isBull ? 'buy' : 'sell';
+  const sl      = isBull
+    ? Math.round(trigger * (1 - slPct) * 100) / 100
+    : Math.round(trigger * (1 + slPct) * 100) / 100;
+  const tp = targets[0];
+
+  const useKey     = hasLive ? liveKey    : key;
+  const useSecret  = hasLive ? liveSecret : secret_key;
+  const useBase    = hasLive ? ALPACA_LIVE_BASE : ALPACA_BASE;
+  const useEnv     = hasLive ? 'live'  : 'paper';
+  const useAcct    = hasLive ? 'live'  : (isBull ? 'bull' : 'bear');
+  const tgOpts     = hasLive ? { live: true } : {};
+  const useLabel   = hasLive ? '[LIVE] BULL' : (isBull ? 'BULL' : 'BEAR');
+  const useHeaders = { 'APCA-API-KEY-ID': useKey, 'APCA-API-SECRET-KEY': useSecret, 'Content-Type': 'application/json' };
+
+  if (mode === 'multi') {
+    const entryOrder = { symbol, qty, side, type: 'stop_limit', stop_price: trigger, limit_price: trigger, time_in_force: 'day' };
+    const r = await fetch(`${useBase}/orders`, { method: 'POST', headers: useHeaders, body: JSON.stringify(entryOrder) });
+    const d = await r.json();
+    if (!r.ok) {
+      const reason = d.message || JSON.stringify(d);
+      await sendTelegram(`❌ ${useLabel} | ${symbol} — Order rejected\n${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`, tgOpts);
+      return { ok: false, error: reason, status: r.status };
+    }
+    const t2    = targets.length >= 2 ? targets[1] : null;
+    const trail = targets.length >= 3 ? (parseFloat(trailPct) || 1.5) : null;
+    orderMetadata[d.id] = { mode: 'multi', symbol, isBull, label: useLabel, target1: tp, target2: t2, trailPct: trail, stopLossPrice: sl, acct: useAcct, status: 'pending_fill', exitOrderIds: null, qty };
+    saveOrderMetadata();
+    try {
+      db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment) VALUES (?,?,?,?,?,?,?,?,?,?,'multi','pending',?) ON CONFLICT(alpaca_order_id) DO NOTHING`)
+        .run(d.id, symbol, direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr(), useEnv);
+    } catch(e) { console.error('DB save error:', e.message); }
+    const modeDesc = !t2 ? `All ${qty} sh → $${tp}` : !trail ? `½ → $${tp}  ·  ½ → $${t2}` : `⅓ → $${tp}  ·  ⅓ → $${t2}  ·  ⅓ Trail ${trail}%`;
+    await sendTelegram(`🟢 ${useLabel} | ${symbol} — Multi-target placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\n${modeDesc}\nSL: $${sl}`, tgOpts);
+    return { ok: true, order: d };
+  }
+
+  // Bracket mode
+  const order = {
+    symbol, qty, side,
+    type: 'stop_limit', stop_price: trigger, limit_price: trigger,
+    time_in_force: 'day', order_class: 'bracket',
+    take_profit: { limit_price: tp },
+    stop_loss: { stop_price: sl, limit_price: Math.round(sl * (isBull ? 0.995 : 1.005) * 100) / 100 },
+  };
+  const r = await fetch(`${useBase}/orders`, { method: 'POST', headers: useHeaders, body: JSON.stringify(order) });
+  const d = await r.json();
+  if (!r.ok) {
+    const reason = d.message || JSON.stringify(d);
+    await sendTelegram(`❌ ${useLabel} | ${symbol} — Order rejected\n${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`, tgOpts);
+    return { ok: false, error: reason, status: r.status };
+  }
+  try {
+    db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment) VALUES (?,?,?,?,?,?,?,?,?,?,'bracket','pending',?) ON CONFLICT(alpaca_order_id) DO NOTHING`)
+      .run(d.id, symbol, direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr(), useEnv);
+  } catch(e) { console.error('DB save error:', e.message); }
+  await sendTelegram(`🟢 ${useLabel} | ${symbol} — Bracket placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\nTP: $${tp}  ·  SL: $${sl}`, tgOpts);
+  return { ok: true, order: d };
+}
+
 app.post('/trade', async (req, res) => {
   const secret = process.env.WEBHOOK_SECRET;
   if (secret && req.headers['x-webhook-secret'] !== secret) {
@@ -624,90 +721,39 @@ app.post('/trade', async (req, res) => {
   const useLabel  = (isBull && hasLive) ? '[LIVE] BULL' : label;
   const useHeaders = { 'APCA-API-KEY-ID': useKey, 'APCA-API-SECRET-KEY': useSecret, 'Content-Type': 'application/json' };
 
-  // Dedup: for bull check live account, for bear check paper
+  // Dedup: check both trades and held_trades
   const existingTrade = (isBull && hasLive)
-    ? db.prepare(`SELECT id FROM trades WHERE date(created_at) = ? AND symbol = ? AND direction = 'bull' AND environment = 'live'`).get(dateET(), symbol.toUpperCase())
-    : db.prepare(`SELECT id FROM trades WHERE date(created_at) = ? AND symbol = ? AND direction = ? AND account = ? AND (environment IS NULL OR environment = 'paper')`).get(dateET(), symbol.toUpperCase(), direction, 'bear');
-  if (existingTrade) {
+    ? db.prepare(`SELECT id FROM trades WHERE date(created_at)=? AND symbol=? AND direction='bull' AND environment='live'`).get(dateET(), symbol.toUpperCase())
+    : db.prepare(`SELECT id FROM trades WHERE date(created_at)=? AND symbol=? AND direction=? AND account=? AND (environment IS NULL OR environment='paper')`).get(dateET(), symbol.toUpperCase(), direction, 'bear');
+  const existingHeld = db.prepare(`SELECT id FROM held_trades WHERE date=? AND symbol=? AND direction=? AND status='held'`).get(dateET(), symbol.toUpperCase(), direction);
+  if (existingTrade || existingHeld) {
     return res.status(409).json({ error: 'Setup already traded today', alreadyTraded: true });
   }
 
-  // Guard via parsed_setups unique index (catches exact-price duplicates)
+  // Guard via parsed_setups unique index
   try {
     db.prepare(`INSERT INTO parsed_setups (date,symbol,direction,trigger_price,target1,target2,target3,account) VALUES (?,?,?,?,?,?,?,?)`)
       .run(dateET(), symbol.toUpperCase(), direction, trigger, targets[0]||null, targets[1]||null, targets[2]||null, isBull?'bull':'bear');
   } catch(e) {
-    if (e.message.includes('UNIQUE constraint')) {
-      return res.status(409).json({ error: 'Setup already traded today', alreadyTraded: true });
-    }
+    if (e.message.includes('UNIQUE constraint')) return res.status(409).json({ error: 'Setup already traded today', alreadyTraded: true });
     console.error('DB setup save error:', e.message);
   }
 
-  try {
-    if (mode === 'multi') {
-      const entryOrder = {
-        symbol: symbol.toUpperCase(), qty, side,
-        type: 'stop_limit', stop_price: trigger, limit_price: trigger,
-        time_in_force: 'day'
-      };
-      const r = await fetch(`${useBase}/orders`, { method: 'POST', headers: useHeaders, body: JSON.stringify(entryOrder) });
-      const d = await r.json();
-      if (!r.ok) {
-        const reason = d.message || JSON.stringify(d);
-        console.error(`[${useLabel}] Trade rejected: ${side} ${symbol} — ${reason}`);
-        await sendTelegram(`❌ ${useLabel} | ${symbol} — Order rejected\n${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`, tgOpts);
-        return res.status(r.status).json({ error: reason });
-      }
-      // 1 target → all shares at T1. 2 targets → 50/50 split. 3+ → 1/3 each with trailing stop.
-      const t2 = targets.length >= 2 ? targets[1] : null;
-      const trail = targets.length >= 3 ? (parseFloat(trailPct) || 1.5) : null;
-      orderMetadata[d.id] = {
-        mode: 'multi', symbol: symbol.toUpperCase(), isBull, label: useLabel,
-        target1: tp, target2: t2, trailPct: trail, stopLossPrice: sl,
-        acct: useAcct, status: 'pending_fill', exitOrderIds: null, qty
-      };
-      saveOrderMetadata();
-      try {
-        db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment) VALUES (?,?,?,?,?,?,?,?,?,?,'multi','pending',?) ON CONFLICT(alpaca_order_id) DO NOTHING`)
-          .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr(), useEnv);
-      } catch(e) { console.error('DB pending save error:', e.message); }
-      const modeDesc = !t2
-        ? `All ${qty} sh → $${tp}`
-        : !trail
-          ? `½ ${Math.floor(qty/2)} sh → $${tp}  ·  ½ ${qty - Math.floor(qty/2)} sh → $${t2}`
-          : `⅓ ${Math.floor(qty/3)} sh → $${tp}  ·  ⅓ ${Math.floor(qty/3)} sh → $${t2}  ·  ⅓ Trail ${trail}%`;
-      console.log(`[${useLabel}] Multi-target trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
-      await sendTelegram(`🟢 ${useLabel} | ${symbol} — Multi-target placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\n${modeDesc}\nSL: $${sl}`, tgOpts);
-      return res.json({ ok: true, order: d, orderId: d.id });
-    }
+  // If hold-until-9:35 is on, store locally — nothing goes to Alpaca until 9:35
+  if (getSetting('holdUntil935', false)) {
+    db.prepare(`INSERT INTO held_trades (date,symbol,direction,trigger,targets,max_dollars,stop_loss_pct,mode,trail_pct) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(dateET(), symbol.toUpperCase(), direction, trigger, JSON.stringify(targets), maxDollars||null, stopLossPct||null, mode||'bracket', trailPct||null);
+    console.log(`[HoldUntil935] Stored ${symbol} ${direction} @ $${trigger} — will place at 9:35`);
+    await sendTelegram(`⏸ ${isBull?'[LIVE] BULL':'BEAR'} | ${symbol} — Held for 9:35\nTrigger $${trigger}  ·  T1 $${targets[0]}`, isBull?{live:true}:{});
+    return res.json({ ok: true, held: true, message: 'Stored for 9:35 placement' });
+  }
 
-    // Bracket mode
-    const order = {
-      symbol: symbol.toUpperCase(), qty, side,
-      type: 'stop_limit', stop_price: trigger, limit_price: trigger,
-      time_in_force: 'day', order_class: 'bracket',
-      take_profit: { limit_price: tp },
-      stop_loss: {
-        stop_price: sl,
-        limit_price: Math.round(sl * (isBull ? 0.995 : 1.005) * 100) / 100
-      }
-    };
-    const r = await fetch(`${useBase}/orders`, { method: 'POST', headers: useHeaders, body: JSON.stringify(order) });
-    const d = await r.json();
-    if (!r.ok) {
-      const reason = d.message || JSON.stringify(d);
-      console.error(`[${useLabel}] Trade rejected: ${side} ${symbol} — ${reason}`);
-      await sendTelegram(`❌ ${useLabel} | ${symbol} — Order rejected\n${side.toUpperCase()} @ $${trigger}\nReason: ${reason}`, tgOpts);
-      return res.status(r.status).json({ error: reason });
-    }
-    try {
-      db.prepare(`INSERT INTO trades (alpaca_order_id,symbol,direction,account,entry_price,shares,dollar_amount,t1_price,stop_loss_price,entry_time_et,order_mode,status,environment) VALUES (?,?,?,?,?,?,?,?,?,?,'bracket','pending',?) ON CONFLICT(alpaca_order_id) DO NOTHING`)
-        .run(d.id, symbol.toUpperCase(), direction, isBull ? 'bull' : 'bear', trigger, qty, trigger * qty, tp, sl, nowETStr(), useEnv);
-    } catch(e) { console.error('DB pending save error:', e.message); }
-    console.log(`[${useLabel}] Trade placed: ${side} ${qty} ${symbol} @ ${trigger}`);
-    await sendTelegram(`🟢 ${useLabel} | ${symbol} — Bracket placed\nStop-limit ${side.toUpperCase()} ${qty} sh → trigger $${trigger}\nTP: $${tp}  ·  SL: $${sl}`, tgOpts);
-    res.json({ ok: true, order: d });
-  } catch (e) {
+  // Immediate placement
+  try {
+    const result = await executeTradeOrder({ symbol: symbol.toUpperCase(), direction, trigger, targets, maxDollars, stopLossPct, mode, trailPct });
+    if (!result.ok) return res.status(result.status || 500).json({ error: result.error });
+    res.json(result);
+  } catch(e) {
     res.status(500).json({ error: e.message });
   }
 });
@@ -1790,6 +1836,77 @@ app.post('/settings/auto-close', (req, res) => {
   res.json({ ok: true, enabled: getSetting('autoCloseEnabled', false), time: getSetting('autoCloseTime', '15:45') });
 });
 
+// ── Held trades: premarket check and 9:35 placement ───────────────────────────
+
+async function checkHeldTradesPremarket() {
+  const today = dateET();
+  const held = db.prepare(`SELECT * FROM held_trades WHERE date=? AND status='held'`).all(today);
+  if (!held.length) return;
+
+  const symbols = [...new Set(held.map(t => t.symbol))];
+  const dataHeaders = { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET };
+  const priceRes = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=sip`, { headers: dataHeaders });
+  if (!priceRes.ok) { console.error('[HeldCheck] price fetch failed'); return; }
+  const priceData = await priceRes.json();
+
+  const cancelled = [];
+  for (const trade of held) {
+    const currentPrice = parseFloat(priceData.trades?.[trade.symbol]?.p);
+    if (!currentPrice) continue;
+    const isBull = trade.direction === 'bull';
+    const alreadyThrough = isBull ? currentPrice >= trade.trigger : currentPrice <= trade.trigger;
+    if (alreadyThrough) {
+      db.prepare(`UPDATE held_trades SET status='cancelled' WHERE id=?`).run(trade.id);
+      cancelled.push(`${isBull?'📈':'📉'} ${trade.symbol}: $${currentPrice.toFixed(2)} already through trigger $${trade.trigger}`);
+      console.log(`[HeldCheck] ${trade.symbol} cancelled — $${currentPrice.toFixed(2)} through trigger $${trade.trigger}`);
+    } else {
+      console.log(`[HeldCheck] ${trade.symbol} OK — $${currentPrice.toFixed(2)} vs trigger $${trade.trigger}`);
+    }
+  }
+  if (cancelled.length) await sendTelegram([`🚫 Pre-open held trade cancel — ${cancelled.length} removed`, ...cancelled].join('\n')).catch(() => {});
+}
+
+async function placeHeldTrades() {
+  const today = dateET();
+  const held = db.prepare(`SELECT * FROM held_trades WHERE date=? AND status='held'`).all(today);
+  if (!held.length) return;
+
+  // Final price check before placing — skip any that gapped through trigger
+  const symbols = [...new Set(held.map(t => t.symbol))];
+  const dataHeaders = { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET };
+  const priceRes = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=sip`, { headers: dataHeaders });
+  const priceData = priceRes.ok ? await priceRes.json() : {};
+
+  for (const trade of held) {
+    const currentPrice = parseFloat(priceData.trades?.[trade.symbol]?.p);
+    const isBull = trade.direction === 'bull';
+
+    if (currentPrice) {
+      const alreadyThrough = isBull ? currentPrice >= trade.trigger : currentPrice <= trade.trigger;
+      if (alreadyThrough) {
+        db.prepare(`UPDATE held_trades SET status='cancelled' WHERE id=?`).run(trade.id);
+        await sendTelegram(`🚫 9:35 skip — ${trade.symbol}: $${currentPrice.toFixed(2)} already through trigger $${trade.trigger}`).catch(() => {});
+        console.log(`[PlaceHeld] ${trade.symbol} skipped at 9:35 — already through trigger`);
+        continue;
+      }
+    }
+
+    try {
+      const targets = JSON.parse(trade.targets);
+      const result = await executeTradeOrder({
+        symbol: trade.symbol, direction: trade.direction, trigger: trade.trigger,
+        targets, maxDollars: trade.max_dollars, stopLossPct: trade.stop_loss_pct,
+        mode: trade.mode, trailPct: trade.trail_pct,
+      });
+      db.prepare(`UPDATE held_trades SET status=? WHERE id=?`).run(result.ok ? 'placed' : 'failed', trade.id);
+      console.log(`[PlaceHeld] ${trade.symbol} ${result.ok ? 'placed' : 'failed: ' + result.error}`);
+    } catch(e) {
+      db.prepare(`UPDATE held_trades SET status='failed' WHERE id=?`).run(trade.id);
+      console.error(`[PlaceHeld] ${trade.symbol} error: ${e.message}`);
+    }
+  }
+}
+
 // ── Market open filter ─────────────────────────────────────────────────────────
 // Runs at 9:30 AM ET and again at 9:35 ET. Cancels any pending stop-limit entry
 // orders where the market has already gapped through the trigger price:
@@ -1894,6 +2011,8 @@ setInterval(() => {
     if (etMinutes >= 9 * 60 + 28 && etMinutes < 9 * 60 + 30 && lastOpenFilter928 !== dateStr) {
       lastOpenFilter928 = dateStr;
       cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:28]', e.message));
+      if (getSetting('holdUntil935', false))
+        checkHeldTradesPremarket().catch(e => console.error('[HeldCheck 9:28]', e.message));
     }
     if (etMinutes >= 9 * 60 + 30 && etMinutes < 9 * 60 + 34 && lastOpenFilter930 !== dateStr) {
       lastOpenFilter930 = dateStr;
@@ -1902,6 +2021,8 @@ setInterval(() => {
     if (etMinutes >= 9 * 60 + 35 && etMinutes < 9 * 60 + 39 && lastOpenFilter935 !== dateStr) {
       lastOpenFilter935 = dateStr;
       cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:35]', e.message));
+      if (getSetting('holdUntil935', false))
+        placeHeldTrades().catch(e => console.error('[PlaceHeld 9:35]', e.message));
     }
   }
 
