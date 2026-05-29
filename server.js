@@ -1838,34 +1838,6 @@ app.post('/settings/auto-close', (req, res) => {
 
 // ── Held trades: premarket check and 9:35 placement ───────────────────────────
 
-async function checkHeldTradesPremarket() {
-  const today = dateET();
-  const held = db.prepare(`SELECT * FROM held_trades WHERE date=? AND status='held'`).all(today);
-  if (!held.length) return;
-
-  const symbols = [...new Set(held.map(t => t.symbol))];
-  const dataHeaders = { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET };
-  const priceRes = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=sip`, { headers: dataHeaders });
-  if (!priceRes.ok) { console.error('[HeldCheck] price fetch failed'); return; }
-  const priceData = await priceRes.json();
-
-  const cancelled = [];
-  for (const trade of held) {
-    const currentPrice = parseFloat(priceData.trades?.[trade.symbol]?.p);
-    if (!currentPrice) continue;
-    const isBull = trade.direction === 'bull';
-    const alreadyThrough = isBull ? currentPrice >= trade.trigger : currentPrice <= trade.trigger;
-    if (alreadyThrough) {
-      db.prepare(`UPDATE held_trades SET status='cancelled' WHERE id=?`).run(trade.id);
-      cancelled.push(`${isBull?'📈':'📉'} ${trade.symbol}: $${currentPrice.toFixed(2)} already through trigger $${trade.trigger}`);
-      console.log(`[HeldCheck] ${trade.symbol} cancelled — $${currentPrice.toFixed(2)} through trigger $${trade.trigger}`);
-    } else {
-      console.log(`[HeldCheck] ${trade.symbol} OK — $${currentPrice.toFixed(2)} vs trigger $${trade.trigger}`);
-    }
-  }
-  if (cancelled.length) await sendTelegram([`🚫 Pre-open held trade cancel — ${cancelled.length} removed`, ...cancelled].join('\n')).catch(() => {});
-}
-
 async function placeHeldTrades() {
   const today = dateET();
   const held = db.prepare(`SELECT * FROM held_trades WHERE date=? AND status='held'`).all(today);
@@ -2011,8 +1983,6 @@ setInterval(() => {
     if (etMinutes >= 9 * 60 + 28 && etMinutes < 9 * 60 + 30 && lastOpenFilter928 !== dateStr) {
       lastOpenFilter928 = dateStr;
       cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:28]', e.message));
-      if (getSetting('holdUntil935', false))
-        checkHeldTradesPremarket().catch(e => console.error('[HeldCheck 9:28]', e.message));
     }
     if (etMinutes >= 9 * 60 + 30 && etMinutes < 9 * 60 + 34 && lastOpenFilter930 !== dateStr) {
       lastOpenFilter930 = dateStr;
