@@ -1070,15 +1070,31 @@ async function clearFailedSetups() {
   } catch(e) { msg.innerHTML = `<div class="msg msg-err">${e.message}</div>`; }
 }
 
+// Pick the best record for a symbol when duplicates exist.
+// Priority: closed (has exit_reason) > open/filled > pending > anything else.
+// Within the same priority tier, the DB already returns DESC by created_at so
+// the first one we see is the most recent — just keep it.
+function dedupLiveTrades(trades) {
+  const rank = t => t.exit_reason ? 3 : t.status === 'filled' ? 2 : t.status === 'pending' ? 1 : 0;
+  const best = {};
+  for (const t of trades) {
+    if (!best[t.symbol] || rank(t) > rank(best[t.symbol])) best[t.symbol] = t;
+  }
+  return Object.values(best);
+}
+
 async function refreshLive() {
   refreshHeldTrades();
   const el = document.getElementById('live-cards');
   el.innerHTML = '<div class="empty" style="grid-column:1/-1;"><span class="spinner"></span>Loading...</div>';
 
   const dateVal = document.getElementById('live-date').value || todayET();
+  const isToday = dateVal === todayET();
+
+  // Run sync first so stale pending orders get updated before we render
+  if (isToday) fetch('/sync-pending', { method: 'POST' }).catch(() => {});
 
   try {
-    // Fetch live account info + positions + DB trades in parallel
     const [acctRes, posRes, dbRes] = await Promise.all([
       fetch('/alpaca-live/account'),
       fetch('/alpaca-live/positions'),
@@ -1090,11 +1106,13 @@ async function refreshLive() {
       return;
     }
 
-    const acct  = await acctRes.json();
-    const pos   = posRes.ok ? await posRes.json() : [];
-    const trades = dbRes.ok ? await dbRes.json() : [];
+    const acct   = await acctRes.json();
+    const pos    = posRes.ok ? await posRes.json() : [];
+    const rawTrades = dbRes.ok ? await dbRes.json() : [];
 
-    // Update live metrics
+    // One card per symbol — prefer closed > open > pending when duplicates exist
+    const trades = dedupLiveTrades(rawTrades);
+
     if (acct && !acct.error) {
       document.getElementById('lm-portfolio').textContent = fmt(acct.portfolio_value);
       document.getElementById('lm-bp').textContent = fmt(acct.buying_power);
@@ -1110,33 +1128,41 @@ async function refreshLive() {
       return;
     }
 
-    // Build simple trade cards for live trades
     const posMap = {};
     if (Array.isArray(pos)) pos.forEach(p => { posMap[p.symbol] = p; });
 
     const rows = trades.map(t => {
       const p = posMap[t.symbol];
-      const isOpen = t.status === 'filled' && !t.exit_reason;
+      const isOpen    = t.status === 'filled' && !t.exit_reason;
       const isPending = t.status === 'pending';
-      const isClosed = !!t.exit_reason;
+      const isClosed  = !!t.exit_reason;
+      // Pending orders from a past date are expired — Alpaca DAY orders don't survive overnight
+      const isExpired = isPending && !isToday;
+
       const unrPnl = p ? parseFloat(p.unrealized_pl || 0) : null;
-      const statusBadge = isPending
-        ? `<span class="badge badge-pending">Pending</span>`
-        : isOpen
-          ? `<span class="badge badge-active">Open</span>`
-          : `<span class="badge badge-closed">${t.exit_reason || 'Closed'}</span>`;
+      const statusBadge = isExpired
+        ? `<span class="badge badge-closed" style="opacity:.6;">Expired</span>`
+        : isPending
+          ? `<span class="badge badge-pending">Pending</span>`
+          : isOpen
+            ? `<span class="badge badge-active">Open</span>`
+            : `<span class="badge badge-closed">${t.exit_reason || 'Closed'}</span>`;
+
       const pnlBadge = t.total_pnl != null
         ? `<span class="badge ${t.total_pnl >= 0 ? 'badge-win' : 'badge-loss'}">${t.total_pnl >= 0 ? '+' : ''}$${Math.abs(t.total_pnl).toFixed(2)}</span>`
-        : unrPnl != null
+        : (!isExpired && !isPending && unrPnl != null)
           ? `<span class="badge ${unrPnl >= 0 ? 'badge-win' : 'badge-loss'}">${unrPnl >= 0 ? '+' : ''}$${Math.abs(unrPnl).toFixed(2)}</span>`
           : '';
+
       const priceDisplay = t.exit_reason
         ? `$${(t.total_pnl != null && t.shares ? (t.entry_price + t.total_pnl / t.shares) : 0).toFixed(2)}`
         : p
           ? `$${parseFloat(p.current_price).toFixed(2)}`
           : `$${(t.entry_price || 0).toFixed(2)}`;
 
-      return `<div class="trade-card bull" style="border-color:rgba(248,113,113,.5);">
+      const cardOpacity = isExpired ? 'opacity:.55;' : '';
+
+      return `<div class="trade-card bull" style="border-color:rgba(248,113,113,.5);${cardOpacity}">
         <div class="card-inner">
           <div class="card-head">
             <div>
@@ -1161,8 +1187,8 @@ async function refreshLive() {
           </div>
           ${t.entry_time_et ? `<div style="font-size:11px;color:var(--muted);font-family:var(--mono);">${t.entry_time_et}</div>` : ''}
           <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
-            ${isPending && t.alpaca_order_id ? `<button class="btn-cancel-ord" onclick="dashCancelOrder('${t.alpaca_order_id}','live')">Cancel Order</button>` : ''}
-            ${t.status !== 'cancelled' ? `<button class="btn-refresh" style="font-size:12px;padding:4px 9px;" onclick="openTradeChart('${t.symbol}','bull','${t.created_at?.slice(0,10)}')">📈 Chart</button>` : ''}
+            ${isPending && !isExpired && t.alpaca_order_id ? `<button class="btn-cancel-ord" onclick="dashCancelOrder('${t.alpaca_order_id}','live')">Cancel Order</button>` : ''}
+            ${!isExpired && t.status !== 'cancelled' ? `<button class="btn-refresh" style="font-size:12px;padding:4px 9px;" onclick="openTradeChart('${t.symbol}','bull','${t.created_at?.slice(0,10)}')">📈 Chart</button>` : ''}
           </div>
         </div>
         ${isClosed && t.total_pnl != null ? `<div class="pnl-banner ${t.total_pnl >= 0 ? 'win' : 'loss'}"><span>${t.exit_reason}</span><span>${t.total_pnl >= 0 ? '+' : ''}$${t.total_pnl.toFixed(2)} (${t.total_pct != null ? (t.total_pct >= 0 ? '+' : '') + t.total_pct.toFixed(2) + '%' : ''})</span></div>` : ''}

@@ -461,6 +461,13 @@ app.post('/db/clear-failed-setups', (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/sync-pending', async (req, res) => {
+  try {
+    await syncPendingOrderStatuses();
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/db/trades', (req, res) => {
   try {
     const date = req.query.date || dateET();
@@ -1521,7 +1528,8 @@ async function syncPendingOrderStatuses() {
     { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'bear', env: 'paper', baseUrl: ALPACA_BASE      },
     { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'bull', env: 'live',  baseUrl: ALPACA_LIVE_BASE },
   ].filter(a => a.key && a.secret);
-  const pending = db.prepare(`SELECT alpaca_order_id, account, environment FROM trades WHERE status='pending' AND date(created_at)=?`).all(dateET());
+  // Check last 2 days so yesterday's DAY orders get marked expired/cancelled overnight
+  const pending = db.prepare(`SELECT alpaca_order_id, account, environment FROM trades WHERE status='pending' AND date(created_at) >= date('now','-2 days')`).all();
   for (const trade of pending) {
     const tradeEnv = trade.environment || 'paper';
     const acct = accounts.find(a => a.label === trade.account && a.env === tradeEnv);
