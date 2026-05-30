@@ -1897,22 +1897,58 @@ async function placeHeldTrades() {
   const held = db.prepare(`SELECT * FROM held_trades WHERE date=? AND status='held'`).all(today);
   if (!held.length) return;
 
-  // Final price check before placing — skip any that gapped through trigger
   const symbols = [...new Set(held.map(t => t.symbol))];
-  const dataHeaders = { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET };
+  const liveKey    = process.env.ALPACA_LIVE_KEY    || process.env.ALPACA_KEY;
+  const liveSecret = process.env.ALPACA_LIVE_SECRET || process.env.ALPACA_SECRET;
+  const dataHeaders = { 'APCA-API-KEY-ID': liveKey, 'APCA-API-SECRET-KEY': liveSecret };
+
+  // Current price check — skip anything already through the trigger right now
   const priceRes = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=sip`, { headers: dataHeaders });
   const priceData = priceRes.ok ? await priceRes.json() : {};
+
+  // 9:30 open bar check — skip anything that opened through the trigger at bell
+  // (stock opened above bull trigger or below SS trigger = opening weakness/strength already played out)
+  let openBars = {};
+  try {
+    const barStart = `${today}T13:29:00Z`;
+    const barEnd   = `${today}T13:32:00Z`;
+    const barRes = await fetch(
+      `${ALPACA_DATA_BASE}/stocks/bars?symbols=${symbols.join(',')}&timeframe=1Min&start=${barStart}&end=${barEnd}&feed=sip`,
+      { headers: dataHeaders }
+    );
+    if (barRes.ok) {
+      const barData = await barRes.json();
+      for (const sym of symbols) {
+        const bars = barData.bars?.[sym];
+        if (bars?.length) openBars[sym] = bars[0].o; // opening price of 9:30 candle
+      }
+    }
+  } catch(e) { console.warn('[PlaceHeld] open bar fetch failed:', e.message); }
 
   for (const trade of held) {
     const currentPrice = parseFloat(priceData.trades?.[trade.symbol]?.p);
     const isBull = trade.direction === 'bull';
 
+    // Skip if price is already through trigger right now
     if (currentPrice) {
       const alreadyThrough = isBull ? currentPrice >= trade.trigger : currentPrice <= trade.trigger;
       if (alreadyThrough) {
         db.prepare(`UPDATE held_trades SET status='cancelled' WHERE id=?`).run(trade.id);
         await sendTelegram(`🚫 9:35 skip — ${trade.symbol}: $${currentPrice.toFixed(2)} already through trigger $${trade.trigger}`).catch(() => {});
         console.log(`[PlaceHeld] ${trade.symbol} skipped at 9:35 — already through trigger`);
+        continue;
+      }
+    }
+
+    // Skip if the 9:30 open was already through the trigger — stock opened with a gap
+    // and is now pulling back. First touch after a gap-open is high risk.
+    const openPrice = openBars[trade.symbol];
+    if (openPrice) {
+      const openedThrough = isBull ? openPrice >= trade.trigger : openPrice <= trade.trigger;
+      if (openedThrough) {
+        db.prepare(`UPDATE held_trades SET status='cancelled' WHERE id=?`).run(trade.id);
+        await sendTelegram(`🚫 9:35 skip — ${trade.symbol}: opened $${openPrice.toFixed(2)} through trigger $${trade.trigger} (opening gap)`).catch(() => {});
+        console.log(`[PlaceHeld] ${trade.symbol} skipped — opened through trigger at $${openPrice.toFixed(2)}`);
         continue;
       }
     }
