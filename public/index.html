@@ -1133,9 +1133,11 @@ async function refreshLive() {
 
     const rows = trades.map(t => {
       const p = posMap[t.symbol];
-      const isOpen    = t.status === 'filled' && !t.exit_reason;
+      // If DB says filled/open but symbol is no longer in Alpaca positions, it was closed outside the bot
+      const manualClosed = t.status === 'filled' && !t.exit_reason && !posMap[t.symbol];
+      const isOpen    = t.status === 'filled' && !t.exit_reason && !manualClosed;
       const isPending = t.status === 'pending';
-      const isClosed  = !!t.exit_reason;
+      const isClosed  = !!t.exit_reason || manualClosed;
       // Pending orders from a past date are expired — Alpaca DAY orders don't survive overnight
       const isExpired = isPending && !isToday;
 
@@ -1146,7 +1148,9 @@ async function refreshLive() {
           ? `<span class="badge badge-pending">Pending</span>`
           : isOpen
             ? `<span class="badge badge-active">Open</span>`
-            : `<span class="badge badge-closed">${t.exit_reason || 'Closed'}</span>`;
+            : manualClosed
+              ? `<span class="badge badge-closed">Closed (manual)</span>`
+              : `<span class="badge badge-closed">${t.exit_reason || 'Closed'}</span>`;
 
       const pnlBadge = t.total_pnl != null
         ? `<span class="badge ${t.total_pnl >= 0 ? 'badge-win' : 'badge-loss'}">${t.total_pnl >= 0 ? '+' : ''}$${Math.abs(t.total_pnl).toFixed(2)}</span>`
