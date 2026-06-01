@@ -1075,7 +1075,7 @@ async function clearFailedSetups() {
 // Within the same priority tier, the DB already returns DESC by created_at so
 // the first one we see is the most recent — just keep it.
 function dedupLiveTrades(trades) {
-  const rank = t => t.exit_reason ? 3 : t.status === 'filled' ? 2 : t.status === 'pending' ? 1 : 0;
+  const rank = t => t.exit_reason ? 3 : t.status === 'filled' ? 2 : t.status === 'cancelled' ? 1.5 : t.status === 'pending' ? 1 : 0;
   const best = {};
   for (const t of trades) {
     if (!best[t.symbol] || rank(t) > rank(best[t.symbol])) best[t.symbol] = t;
