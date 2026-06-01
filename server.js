@@ -1541,7 +1541,7 @@ async function syncPendingOrderStatuses() {
       if (!r.ok) continue;
       const order = await r.json();
       let newStatus = null;
-      if (order.status === 'canceled' || order.status === 'cancelled') newStatus = 'cancelled';
+      if (order.status === 'canceled' || order.status === 'cancelled' || order.status === 'rejected') newStatus = 'cancelled';
       else if (order.status === 'expired' || order.status === 'done_for_day') newStatus = 'expired';
       else if (order.status === 'filled') newStatus = 'filled';
       if (newStatus) {
