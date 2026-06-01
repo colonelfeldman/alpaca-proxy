@@ -1928,7 +1928,7 @@ async function placeHeldTrades() {
       const barData = await barRes.json();
       for (const sym of symbols) {
         const bars = barData.bars?.[sym];
-        if (bars?.length) openBars[sym] = bars[0].o; // opening price of 9:30 candle
+        if (bars?.length) openBars[sym] = { o: bars[0].o, h: bars[0].h, l: bars[0].l };
       }
     }
   } catch(e) { console.warn('[PlaceHeld] open bar fetch failed:', e.message); }
@@ -1948,15 +1948,19 @@ async function placeHeldTrades() {
       }
     }
 
-    // Skip if the 9:30 open was already through the trigger — stock opened with a gap
-    // and is now pulling back. First touch after a gap-open is high risk.
-    const openPrice = openBars[trade.symbol];
-    if (openPrice) {
-      const openedThrough = isBull ? openPrice >= trade.trigger : openPrice <= trade.trigger;
+    // Skip if the 9:30 candle traded through the trigger at any point — gap-open or first-minute spike
+    const openBar = openBars[trade.symbol];
+    if (openBar) {
+      // Bull: cancel if open OR high reached/exceeded trigger (stock already showed strength)
+      // Bear: cancel if open OR low reached/fell-through trigger (stock already showed weakness)
+      const openedThrough = isBull
+        ? (openBar.o >= trade.trigger || openBar.h >= trade.trigger)
+        : (openBar.o <= trade.trigger || openBar.l <= trade.trigger);
       if (openedThrough) {
+        const ref = isBull ? openBar.h : openBar.l;
         db.prepare(`UPDATE held_trades SET status='cancelled' WHERE id=?`).run(trade.id);
-        await sendTelegram(`🚫 9:35 skip — ${trade.symbol}: opened $${openPrice.toFixed(2)} through trigger $${trade.trigger} (opening gap)`).catch(() => {});
-        console.log(`[PlaceHeld] ${trade.symbol} skipped — opened through trigger at $${openPrice.toFixed(2)}`);
+        await sendTelegram(`🚫 9:35 skip — ${trade.symbol}: opening candle ${isBull ? 'high' : 'low'} $${ref.toFixed(2)} through trigger $${trade.trigger}`).catch(() => {});
+        console.log(`[PlaceHeld] ${trade.symbol} skipped — opening candle touched trigger (${isBull ? 'h' : 'l'}=$${ref.toFixed(2)})`);
         continue;
       }
     }
