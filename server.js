@@ -658,6 +658,10 @@ app.delete('/held-trades/:id', (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/settings/bull-mode', (req, res) => {
+  res.json({ live: process.env.BULL_USE_LIVE === 'true' });
+});
+
 app.get('/settings/hold-until-935', (req, res) => {
   res.json({ enabled: getSetting('holdUntil935', false) });
 });
@@ -805,7 +809,7 @@ app.post('/trade', async (req, res) => {
     db.prepare(`INSERT INTO held_trades (date,symbol,direction,trigger,targets,max_dollars,stop_loss_pct,mode,trail_pct) VALUES (?,?,?,?,?,?,?,?,?)`)
       .run(dateET(), symbol.toUpperCase(), direction, trigger, JSON.stringify(targets), maxDollars||null, stopLossPct||null, mode||'bracket', trailPct||null);
     console.log(`[HoldUntil935] Stored ${symbol} ${direction} @ $${trigger} — will place at 9:35`);
-    await sendTelegram(`⏸ ${isBull?'[LIVE] BULL':'BEAR'} | ${symbol} — Held for 9:35\nTrigger $${trigger}  ·  T1 $${targets[0]}`, isBull?{live:true}:{});
+    await sendTelegram(`⏸ ${useLabel} | ${symbol} — Held for 9:35\nTrigger $${trigger}  ·  T1 $${targets[0]}`, tgOpts);
     return res.json({ ok: true, held: true, message: 'Stored for 9:35 placement' });
   }
 

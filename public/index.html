@@ -502,7 +502,7 @@ button{cursor:pointer;font-family:var(--font);}
     <span class="nav-countdown" id="mkt-countdown">–</span>
     <button class="btn-close-all" id="btn-close-all" onclick="closeAllNow()" title="Close all positions at market">Close All</button>
     <a href="https://app.alpaca.markets" target="_blank" class="btn-alpaca">Alpaca ↗</a>
-    <span class="pill-paper">BULL: LIVE · BEAR: PAPER</span>
+    <span class="pill-paper" id="bull-mode-pill">BULL: … · BEAR: PAPER</span>
   </div>
 </nav>
 
@@ -2097,6 +2097,16 @@ async function loadHold935Setting() {
   } catch(e) {}
 }
 
+async function loadBullModePill() {
+  try {
+    const r = await fetch('/settings/bull-mode');
+    const d = await r.json();
+    const pill = document.getElementById('bull-mode-pill');
+    pill.textContent = d.live ? 'BULL: LIVE · BEAR: PAPER' : 'BULL: PAPER · BEAR: PAPER';
+    pill.style.color = d.live ? 'var(--red)' : '';
+  } catch(e) {}
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────────
 document.getElementById('dash-date').value = todayET();
 document.getElementById('live-date').value = todayET();
@@ -2109,6 +2119,7 @@ if (savedSumDate) {
 }
 loadMetrics();
 setInterval(loadMetrics, 60000);
+loadBullModePill();
 // Init watchlist inputs from localStorage
 const _wlD = localStorage.getItem('maxDollars'); if (_wlD) document.getElementById('wl-maxDollars').value = _wlD;
 const _wlS = localStorage.getItem('stopLossPct'); if (_wlS) document.getElementById('wl-stopLossPct').value = _wlS;
