@@ -674,7 +674,7 @@ async function executeTradeOrder({ symbol, direction, trigger, targets, maxDolla
   const secret_key = isBull ? process.env.ALPACA_SECRET    : process.env.ALPACA_BEAR_SECRET;
   const liveKey    = isBull ? process.env.ALPACA_LIVE_KEY  : null;
   const liveSecret = isBull ? process.env.ALPACA_LIVE_SECRET : null;
-  const hasLive    = !!(isBull && liveKey && liveSecret);
+  const hasLive    = !!(isBull && liveKey && liveSecret && process.env.BULL_USE_LIVE === 'true');
 
   const dollars = parseFloat(maxDollars) || 10000;
   const slPct   = parseFloat(stopLossPct) / 100 || 0.03;
@@ -756,7 +756,7 @@ app.post('/trade', async (req, res) => {
   const secret_key = isBull ? process.env.ALPACA_SECRET : process.env.ALPACA_BEAR_SECRET;
   const liveKey    = isBull ? process.env.ALPACA_LIVE_KEY    : null;
   const liveSecret = isBull ? process.env.ALPACA_LIVE_SECRET : null;
-  let hasLive = !!(isBull && liveKey && liveSecret);
+  let hasLive = !!(isBull && liveKey && liveSecret && process.env.BULL_USE_LIVE === 'true');
 
   if (!key || !secret_key) {
     const missing = isBull ? 'ALPACA_KEY / ALPACA_SECRET' : 'ALPACA_BEAR_KEY / ALPACA_BEAR_SECRET';
