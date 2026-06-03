@@ -1527,11 +1527,12 @@ async function sendDailySummary() {
 }
 
 async function syncPendingOrderStatuses() {
+  const bullUseLive = process.env.BULL_USE_LIVE === 'true';
   const accounts = [
-    { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'bull', env: 'paper', baseUrl: ALPACA_BASE      },
+    !bullUseLive && { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'bull', env: 'paper', baseUrl: ALPACA_BASE      },
     { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'bear', env: 'paper', baseUrl: ALPACA_BASE      },
-    { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'bull', env: 'live',  baseUrl: ALPACA_LIVE_BASE },
-  ].filter(a => a.key && a.secret);
+    bullUseLive  && { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'bull', env: 'live',  baseUrl: ALPACA_LIVE_BASE },
+  ].filter(a => a && a.key && a.secret);
   // Check last 2 days so yesterday's DAY orders get marked expired/cancelled overnight
   const pending = db.prepare(`SELECT alpaca_order_id, account, environment FROM trades WHERE status='pending' AND date(created_at) >= date('now','-2 days')`).all();
   for (const trade of pending) {
@@ -1559,11 +1560,12 @@ async function syncPendingOrderStatuses() {
 // ── Close all positions ────────────────────────────────────────────────────────
 
 async function closeAllPositions(triggeredBy = 'manual') {
+  const bullUseLive = process.env.BULL_USE_LIVE === 'true';
   const accounts = [
-    { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL', baseUrl: ALPACA_BASE,      isLive: false },
+    !bullUseLive && { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL', baseUrl: ALPACA_BASE,      isLive: false },
     { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR', baseUrl: ALPACA_BASE,      isLive: false },
-    { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'LIVE', baseUrl: ALPACA_LIVE_BASE, isLive: true  },
-  ].filter(a => a.key && a.secret);
+    bullUseLive  && { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'LIVE', baseUrl: ALPACA_LIVE_BASE, isLive: true  },
+  ].filter(a => a && a.key && a.secret);
 
   let submitted = 0, errors = [];
   const acctSymbols = {};
@@ -1695,11 +1697,12 @@ app.post('/market-open-filter', async (req, res) => {
 // premarket price vs trigger. Used to preview what the market-open filter will do.
 app.get('/premarket-snapshot', async (req, res) => {
   try {
+    const bullUseLive = process.env.BULL_USE_LIVE === 'true';
     const accounts = [
-      { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL', baseUrl: ALPACA_BASE,      isLive: false },
+      !bullUseLive && { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL', baseUrl: ALPACA_BASE,      isLive: false },
       { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR', baseUrl: ALPACA_BASE,      isLive: false },
-      { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'LIVE', baseUrl: ALPACA_LIVE_BASE, isLive: true  },
-    ].filter(a => a.key && a.secret);
+      bullUseLive  && { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'LIVE', baseUrl: ALPACA_LIVE_BASE, isLive: true  },
+    ].filter(a => a && a.key && a.secret);
 
     // Gather all open stop-limit entry orders across all accounts
     const allEntries = [];
@@ -1992,11 +1995,12 @@ async function placeHeldTrades() {
 //   SS entry:   cancel if market price <= trigger (price already below, already broken)
 
 async function cancelStaleOpeningOrders() {
+  const bullUseLive = process.env.BULL_USE_LIVE === 'true';
   const accounts = [
-    { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL', baseUrl: ALPACA_BASE,      isLive: false },
+    !bullUseLive && { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL', baseUrl: ALPACA_BASE,      isLive: false },
     { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'BEAR', baseUrl: ALPACA_BASE,      isLive: false },
-    { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'LIVE', baseUrl: ALPACA_LIVE_BASE, isLive: true  },
-  ].filter(a => a.key && a.secret);
+    bullUseLive  && { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'LIVE', baseUrl: ALPACA_LIVE_BASE, isLive: true  },
+  ].filter(a => a && a.key && a.secret);
 
   let totalCancelled = 0;
   const paperCancelMessages = [];
