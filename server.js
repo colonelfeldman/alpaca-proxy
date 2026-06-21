@@ -649,7 +649,7 @@ app.get('/held-trades', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Cancel a single held trade before 9:35
+// Cancel a single held trade before 9:45
 app.delete('/held-trades/:id', (req, res) => {
   try {
     const info = db.prepare(`UPDATE held_trades SET status='cancelled' WHERE id=? AND status='held'`).run(req.params.id);
@@ -671,7 +671,7 @@ app.post('/settings/hold-until-935', (req, res) => {
   res.json({ ok: true, enabled: getSetting('holdUntil935', false) });
 });
 
-// Shared placement logic — called by /trade (immediate) and placeHeldTrades() (9:35).
+// Shared placement logic — called by /trade (immediate) and placeHeldTrades() (9:45).
 async function executeTradeOrder({ symbol, direction, trigger, targets, maxDollars, stopLossPct, mode, trailPct }) {
   const isBull = direction === 'bull';
   const key        = isBull ? process.env.ALPACA_KEY       : process.env.ALPACA_BEAR_KEY;
@@ -681,7 +681,7 @@ async function executeTradeOrder({ symbol, direction, trigger, targets, maxDolla
   const hasLive    = !!(isBull && liveKey && liveSecret && process.env.BULL_USE_LIVE === 'true');
 
   const dollars = parseFloat(maxDollars) || 10000;
-  const slPct   = parseFloat(stopLossPct) / 100 || 0.03;
+  const slPct   = parseFloat(stopLossPct) / 100 || 0.05;
   const qty     = Math.max(1, Math.floor(dollars / trigger));
   const side    = isBull ? 'buy' : 'sell';
   const sl      = isBull
@@ -768,7 +768,7 @@ app.post('/trade', async (req, res) => {
   }
 
   const dollars = parseFloat(maxDollars) || 10000;
-  const slPct = parseFloat(stopLossPct) / 100 || 0.03;
+  const slPct = parseFloat(stopLossPct) / 100 || 0.05;
   const qty = Math.max(1, Math.floor(dollars / trigger));
   const side = isBull ? 'buy' : 'sell';
   const sl = isBull
@@ -804,13 +804,13 @@ app.post('/trade', async (req, res) => {
     console.error('DB setup save error:', e.message);
   }
 
-  // If hold-until-9:35 is on, store locally — nothing goes to Alpaca until 9:35
+  // If hold-until-9:45 is on, store locally — nothing goes to Alpaca until 9:45
   if (getSetting('holdUntil935', false)) {
     db.prepare(`INSERT INTO held_trades (date,symbol,direction,trigger,targets,max_dollars,stop_loss_pct,mode,trail_pct) VALUES (?,?,?,?,?,?,?,?,?)`)
       .run(dateET(), symbol.toUpperCase(), direction, trigger, JSON.stringify(targets), maxDollars||null, stopLossPct||null, mode||'bracket', trailPct||null);
-    console.log(`[HoldUntil935] Stored ${symbol} ${direction} @ $${trigger} — will place at 9:35`);
-    await sendTelegram(`⏸ ${useLabel} | ${symbol} — Held for 9:35\nTrigger $${trigger}  ·  T1 $${targets[0]}`, tgOpts);
-    return res.json({ ok: true, held: true, message: 'Stored for 9:35 placement' });
+    console.log(`[HoldUntil935] Stored ${symbol} ${direction} @ $${trigger} — will place at 9:45`);
+    await sendTelegram(`⏸ ${useLabel} | ${symbol} — Held for 9:45\nTrigger $${trigger}  ·  T1 $${targets[0]}`, tgOpts);
+    return res.json({ ok: true, held: true, message: 'Stored for 9:45 placement' });
   }
 
   // Immediate placement
@@ -947,7 +947,7 @@ app.post('/schwab/bracket', async (req, res) => {
   }
   const isBull = direction === 'bull';
   const dollars = parseFloat(maxDollars) || 10000;
-  const slPct   = parseFloat(stopLossPct) / 100 || 0.03;
+  const slPct   = parseFloat(stopLossPct) / 100 || 0.05;
   const qty     = Math.max(1, Math.floor(dollars / trigger));
   const entryInstruction = isBull ? 'BUY'  : 'SELL_SHORT';
   const exitInstruction  = isBull ? 'SELL' : 'BUY_TO_COVER';
@@ -1905,7 +1905,7 @@ app.post('/settings/auto-close', (req, res) => {
   res.json({ ok: true, enabled: getSetting('autoCloseEnabled', false), time: getSetting('autoCloseTime', '15:45') });
 });
 
-// ── Held trades: premarket check and 9:35 placement ───────────────────────────
+// ── Held trades: 9:45 placement ───────────────────────────────────────────────
 
 async function placeHeldTrades() {
   const today = dateET();
@@ -1949,8 +1949,8 @@ async function placeHeldTrades() {
       const alreadyThrough = isBull ? currentPrice >= trade.trigger : currentPrice <= trade.trigger;
       if (alreadyThrough) {
         db.prepare(`UPDATE held_trades SET status='cancelled' WHERE id=?`).run(trade.id);
-        await sendTelegram(`🚫 9:35 skip — ${trade.symbol}: $${currentPrice.toFixed(2)} already through trigger $${trade.trigger}`).catch(() => {});
-        console.log(`[PlaceHeld] ${trade.symbol} skipped at 9:35 — already through trigger`);
+        await sendTelegram(`🚫 9:45 skip — ${trade.symbol}: $${currentPrice.toFixed(2)} already through trigger $${trade.trigger}`).catch(() => {});
+        console.log(`[PlaceHeld] ${trade.symbol} skipped at 9:45 — already through trigger`);
         continue;
       }
     }
@@ -1966,7 +1966,7 @@ async function placeHeldTrades() {
       if (openedThrough) {
         const ref = isBull ? openBar.h : openBar.l;
         db.prepare(`UPDATE held_trades SET status='cancelled' WHERE id=?`).run(trade.id);
-        await sendTelegram(`🚫 9:35 skip — ${trade.symbol}: opening candle ${isBull ? 'high' : 'low'} $${ref.toFixed(2)} through trigger $${trade.trigger}`).catch(() => {});
+        await sendTelegram(`🚫 9:45 skip — ${trade.symbol}: opening candle ${isBull ? 'high' : 'low'} $${ref.toFixed(2)} through trigger $${trade.trigger}`).catch(() => {});
         console.log(`[PlaceHeld] ${trade.symbol} skipped — opening candle touched trigger (${isBull ? 'h' : 'l'}=$${ref.toFixed(2)})`);
         continue;
       }
@@ -1989,7 +1989,7 @@ async function placeHeldTrades() {
 }
 
 // ── Market open filter ─────────────────────────────────────────────────────────
-// Runs at 9:30 AM ET and again at 9:35 ET. Cancels any pending stop-limit entry
+// Cancels any pending stop-limit entry
 // orders where the market has already gapped through the trigger price:
 //   Bull entry: cancel if market price >= trigger (price already above, no clean breakout)
 //   SS entry:   cancel if market price <= trigger (price already below, already broken)
@@ -2069,9 +2069,7 @@ async function cancelStaleOpeningOrders() {
 }
 
 let lastAutoCloseDate  = null;
-let lastOpenFilter928  = null;
-let lastOpenFilter930  = null;
-let lastOpenFilter935  = null;
+let lastPlaceHeld945   = null;
 
 setInterval(() => {
   const now     = new Date();
@@ -2086,23 +2084,12 @@ setInterval(() => {
     sendDailySummary();
   }
 
-  // Pre-open filter — 9:28 AM ET (2 min before bell, catches obvious gap-above cases)
-  // Market open filter — 9:30 AM ET (backup for anything that develops in the last 2 min)
-  // Follow-up filter  — 9:35 AM ET (catches any fast-movers that slipped through)
+  // Place held trades at 9:45 AM ET
   if (isWeekday) {
-    if (etMinutes >= 9 * 60 + 28 && etMinutes < 9 * 60 + 30 && lastOpenFilter928 !== dateStr) {
-      lastOpenFilter928 = dateStr;
-      cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:28]', e.message));
-    }
-    if (etMinutes >= 9 * 60 + 30 && etMinutes < 9 * 60 + 34 && lastOpenFilter930 !== dateStr) {
-      lastOpenFilter930 = dateStr;
-      cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:30]', e.message));
-    }
-    if (etMinutes >= 9 * 60 + 35 && etMinutes < 9 * 60 + 39 && lastOpenFilter935 !== dateStr) {
-      lastOpenFilter935 = dateStr;
-      cancelStaleOpeningOrders().catch(e => console.error('[OpenFilter 9:35]', e.message));
+    if (etMinutes >= 9 * 60 + 45 && etMinutes < 9 * 60 + 49 && lastPlaceHeld945 !== dateStr) {
+      lastPlaceHeld945 = dateStr;
       if (getSetting('holdUntil935', false))
-        placeHeldTrades().catch(e => console.error('[PlaceHeld 9:35]', e.message));
+        placeHeldTrades().catch(e => console.error('[PlaceHeld 9:45]', e.message));
     }
   }
 
