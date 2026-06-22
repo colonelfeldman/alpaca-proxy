@@ -1533,8 +1533,8 @@ async function syncPendingOrderStatuses() {
     { key: process.env.ALPACA_BEAR_KEY, secret: process.env.ALPACA_BEAR_SECRET, label: 'bear', env: 'paper', baseUrl: ALPACA_BASE      },
     bullUseLive  && { key: process.env.ALPACA_LIVE_KEY, secret: process.env.ALPACA_LIVE_SECRET, label: 'bull', env: 'live',  baseUrl: ALPACA_LIVE_BASE },
   ].filter(a => a && a.key && a.secret);
-  // Check last 2 days so yesterday's DAY orders get marked expired/cancelled overnight
-  const pending = db.prepare(`SELECT alpaca_order_id, account, environment FROM trades WHERE status='pending' AND date(created_at) >= date('now','-2 days')`).all();
+  // Check last 30 days so old pending orders don't get stranded
+  const pending = db.prepare(`SELECT alpaca_order_id, account, environment FROM trades WHERE status='pending' AND date(created_at) >= date('now','-30 days')`).all();
   for (const trade of pending) {
     const tradeEnv = trade.environment || 'paper';
     const acct = accounts.find(a => a.label === trade.account && a.env === tradeEnv);
