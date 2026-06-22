@@ -461,6 +461,15 @@ app.post('/db/clear-failed-setups', (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.patch('/trades/:id/status', (req, res) => {
+  const { status } = req.body;
+  const allowed = ['pending', 'filled', 'cancelled', 'expired', 'closed'];
+  if (!allowed.includes(status)) return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
+  const info = db.prepare(`UPDATE trades SET status=? WHERE id=?`).run(status, req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: 'Trade not found' });
+  res.json({ ok: true, id: req.params.id, status });
+});
+
 app.post('/sync-pending', async (req, res) => {
   try {
     await syncPendingOrderStatuses();
