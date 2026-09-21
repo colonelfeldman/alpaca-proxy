@@ -1271,6 +1271,22 @@ async function pollAccount(key, secret, label, opts = {}) {
     const r = await fetch(`${baseUrl}/orders?status=filled&limit=50`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
     if (!r.ok) { console.error(`[${label}] Alpaca poll error:`, r.status); return; }
     const orders = await r.json();
+    // This list isn't nested, so a bracket entry shows no legs and its TP/SL fills look like new trades.
+    // Look the legs up first so exits are recognised, and go oldest-first so an entry is saved before its exit.
+    // Paper accounts only — the live account is left exactly as it was.
+    if (!isLive) {
+      for (const order of orders) {
+        if (seenOrderIds.has(order.id) || order.order_class !== 'bracket') continue;
+        try {
+          const lr = await fetch(`${baseUrl}/orders/${order.id}?nested=true`, { headers: { 'APCA-API-KEY-ID': key, 'APCA-API-SECRET-KEY': secret } });
+          if (!lr.ok) continue;
+          for (const leg of ((await lr.json()).legs || [])) {
+            if (leg.id) exitToEntry[leg.id] = order.id;
+          }
+        } catch (e) { console.error(`[${label}] bracket leg lookup error:`, e.message); }
+      }
+      orders.sort((a, b) => new Date(a.filled_at) - new Date(b.filled_at));
+    }
     for (const order of orders) {
       if (seenOrderIds.has(order.id)) continue;
       seenOrderIds.add(order.id);
