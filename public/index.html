@@ -770,7 +770,7 @@ button{cursor:pointer;font-family:var(--font);}
         <div id="setups-list"></div>
       </div>
       <div class="action-bar" id="wl-action-bar">
-        <button class="btn btn-primary" onclick="placeAllOrders()" id="btn-place-all">Place all orders (bull→Live, bear→Paper)</button>
+        <button class="btn btn-primary" onclick="placeAllOrders()" id="btn-place-all">Place all orders</button>
       </div>
       <div id="place-all-msg"></div>
     </div>
@@ -1896,6 +1896,11 @@ function calcSLWl(trigger, dir) {
   return dir === 'bull' ? round2(trigger * (1 - pct)) : round2(trigger * (1 + pct));
 }
 
+// Which account bull setups really go to. Set from /settings/bull-mode; null until it loads.
+let bullLive = null;
+function bullAcct() { return bullLive === null ? '…' : bullLive ? 'Live' : 'Paper'; }
+function placeAllLabel() { return 'Place all orders (bull→' + bullAcct() + ', bear→Paper)'; }
+
 function renderSetups() {
   const el = document.getElementById('setups-list');
   if (!parsedSetups.length) { el.innerHTML = '<div class="empty">No setups</div>'; return; }
@@ -1906,9 +1911,9 @@ function renderSetups() {
     const sb = s.status==='placed'?'badge-active':s.status==='error'?'badge-loss':'badge-pending';
     const sl2 = s.status==='placed'?'✓ Placed':s.status==='error'?'✗ Error':'Pending';
     const show = s.status !== 'placed' && wlMode === 'manual';
-    const acctLabel = s.direction === 'bull'
+    const acctLabel = (s.direction === 'bull' && bullLive)
       ? '<span style="font-size:10px;color:var(--red);font-weight:600;font-family:var(--mono);">🔴 Live</span>'
-      : '<span style="font-size:10px;color:var(--muted);font-weight:600;font-family:var(--mono);">Paper</span>';
+      : '<span style="font-size:10px;color:var(--muted);font-weight:600;font-family:var(--mono);">' + (s.direction === 'bull' ? bullAcct() : 'Paper') + '</span>';
     return `<div class="setup-row ${s.status==='placed'?'placed-row':''}">
       <span class="symbol">${s.symbol}</span>
       <div style="display:flex;flex-direction:column;gap:3px;">
@@ -1919,7 +1924,7 @@ function renderSetups() {
       <span class="badge ${sb}">${sl2}</span>
       ${show
         ? `<div style="display:flex;gap:5px;flex-wrap:wrap;">
-            <button class="btn-success btn-sm" onclick="placeSingle(${i})">${s.direction==='bull'?'Place Live':'Place Paper'}</button>
+            <button class="btn-success btn-sm" onclick="placeSingle(${i})">Place ${s.direction==='bull'?bullAcct():'Paper'}</button>
             <button class="btn-danger btn-sm" onclick="removeSetup(${i})">✕</button>
           </div>`
         : '<span></span>'}
@@ -1976,7 +1981,7 @@ async function placeAllOrders() {
     renderSetups();
     await new Promise(r=>setTimeout(r,300));
   }
-  if (btn) { btn.disabled=false; btn.textContent='Place all orders (bull→Live, bear→Paper)'; }
+  if (btn) { btn.disabled=false; btn.textContent=placeAllLabel(); }
   msg.innerHTML = fail===0
     ? '<div class="msg msg-ok">✓ '+ok+' orders placed</div>'
     : '<div class="msg msg-err">'+ok+' placed, '+fail+' failed</div>';
@@ -2104,6 +2109,10 @@ async function loadBullModePill() {
     const pill = document.getElementById('bull-mode-pill');
     pill.textContent = d.live ? 'BULL: LIVE · BEAR: PAPER' : 'BULL: PAPER · BEAR: PAPER';
     pill.style.color = d.live ? 'var(--red)' : '';
+    // Watchlist labels follow the real setting
+    bullLive = !!d.live;
+    renderSetups();
+    document.getElementById('btn-place-all').textContent = placeAllLabel();
   } catch(e) {}
 }
 
