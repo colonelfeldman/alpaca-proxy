@@ -2004,6 +2004,21 @@ async function placeHeldTrades() {
   }
 }
 
+// Manual override — runs the same held-trade placement logic as the 9:45 job, on demand.
+// For days the hold window is missed (e.g. setups added after 9:49) or for testing.
+app.post('/admin/place-held-now', async (req, res) => {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret && req.headers['x-webhook-secret'] !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    await placeHeldTrades();
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Market open filter ─────────────────────────────────────────────────────────
 // Cancels any pending stop-limit entry
 // orders where the market has already gapped through the trigger price:
