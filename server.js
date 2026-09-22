@@ -616,20 +616,17 @@ app.get('/held-trades', async (req, res) => {
     const liveSecret = process.env.ALPACA_LIVE_SECRET || process.env.ALPACA_SECRET;
     const dataHeaders = { 'APCA-API-KEY-ID': liveKey, 'APCA-API-SECRET-KEY': liveSecret };
     let prices = {};
-    const fetchPrices = async (feed) => {
-      const pr = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=${feed}`, { headers: dataHeaders });
-      if (!pr.ok) { console.warn('[HeldTrades] price fetch failed, feed='+feed, pr.status); return false; }
-      const pd = await pr.json();
-      let gotAny = false;
-      for (const sym of symbols) {
-        const p = parseFloat(pd.trades?.[sym]?.p);
-        if (p > 0) { prices[sym] = p; gotAny = true; }
-      }
-      return gotAny;
-    };
+    // feed=iex directly — this account has no SIP subscription, so a sip attempt would just 403 every time.
     try {
-      const ok = await fetchPrices('sip');
-      if (!ok) await fetchPrices('iex');
+      const pr = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=iex`, { headers: dataHeaders });
+      if (!pr.ok) { console.warn('[HeldTrades] price fetch failed:', pr.status); }
+      else {
+        const pd = await pr.json();
+        for (const sym of symbols) {
+          const p = parseFloat(pd.trades?.[sym]?.p);
+          if (p > 0) prices[sym] = p;
+        }
+      }
     } catch(e) { console.warn('[HeldTrades] price fetch error:', e.message); }
 
     const trades = held.map(t => {
@@ -1740,19 +1737,12 @@ app.get('/premarket-snapshot', async (req, res) => {
 
     const symbols = [...new Set(allEntries.map(o => o.symbol))];
 
-    // Fetch snapshots — try SIP feed first (live account), fall back to default
-    let feedUsed = 'sip';
-    let snapData;
+    // feed=iex directly — this account has no SIP subscription, so a sip attempt would just 403 every time.
+    const feedUsed = 'iex';
     const dataHeaders = { 'APCA-API-KEY-ID': process.env.ALPACA_KEY, 'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET };
-    const sipRes = await fetch(`${ALPACA_DATA_BASE}/stocks/snapshots?symbols=${symbols.join(',')}&feed=sip`, { headers: dataHeaders });
-    if (sipRes.ok) {
-      snapData = await sipRes.json();
-    } else {
-      feedUsed = 'iex';
-      const iexRes = await fetch(`${ALPACA_DATA_BASE}/stocks/snapshots?symbols=${symbols.join(',')}`, { headers: dataHeaders });
-      if (!iexRes.ok) throw new Error(`Snapshot fetch failed: ${iexRes.status}`);
-      snapData = await iexRes.json();
-    }
+    const snapRes = await fetch(`${ALPACA_DATA_BASE}/stocks/snapshots?symbols=${symbols.join(',')}&feed=iex`, { headers: dataHeaders });
+    if (!snapRes.ok) throw new Error(`Snapshot fetch failed: ${snapRes.status}`);
+    const snapData = await snapRes.json();
 
     const today = dateET();
     const upsertSnap = db.prepare(`
