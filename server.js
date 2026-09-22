@@ -1933,8 +1933,12 @@ async function placeHeldTrades() {
   const liveSecret = process.env.ALPACA_LIVE_SECRET || process.env.ALPACA_SECRET;
   const dataHeaders = { 'APCA-API-KEY-ID': liveKey, 'APCA-API-SECRET-KEY': liveSecret };
 
-  // Current price check — skip anything already through the trigger right now
-  const priceRes = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=sip`, { headers: dataHeaders });
+  // Current price check — skip anything already through the trigger right now.
+  // feed=iex: this account has no SIP subscription, so feed=sip always 403s. That failure
+  // used to be swallowed silently (priceData={}), which meant this skip check never fired —
+  // e.g. GOOGL placed 2026-09-22 while already well through its trigger.
+  const priceRes = await fetch(`${ALPACA_DATA_BASE}/stocks/trades/latest?symbols=${symbols.join(',')}&feed=iex`, { headers: dataHeaders });
+  if (!priceRes.ok) console.error('[PlaceHeld] price fetch failed, skip-if-through-trigger check disabled this run:', priceRes.status);
   const priceData = priceRes.ok ? await priceRes.json() : {};
 
   // 9:30 open bar check — skip anything that opened through the trigger at bell
