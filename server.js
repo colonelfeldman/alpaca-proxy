@@ -1379,7 +1379,7 @@ async function pollAccount(key, secret, label, opts = {}) {
         // open trade is that trade being closed — by EOD auto-close, Close All, or a manual sell
         // in Alpaca. Record it as the exit instead of saving it as a new trade in the other direction.
         const closesDirection = order.side === 'sell' ? 'bull' : 'bear';
-        const openTrade = (!isExitOrder && !meta && order.order_class !== 'bracket')
+        const openTrade = (!isExitOrder && !meta && order.order_class !== 'bracket' && order.asset_class !== 'us_option')
           ? db.prepare(`
               SELECT * FROM trades
               WHERE symbol=? AND account=? AND COALESCE(environment,'paper')=? AND direction=?
@@ -2049,6 +2049,9 @@ app.post('/admin/repair-close-fills', (req, res) => {
   }
   try {
     const apply = req.body?.apply === true;
+    // Optional: limit the repair to specific close rows, e.g. {"closeIds": [843]}
+    const onlyIds = Array.isArray(req.body?.closeIds) ? new Set(req.body.closeIds.map(Number)) : null;
+    const isOption = sym => /\d{6}[CP]\d{8}$/.test(sym);
     const pairs = db.prepare(`
       SELECT c.id AS close_id, c.entry_price AS exit_price, c.entry_time_et AS exit_time_et, c.shares AS close_shares,
              o.id AS open_id, o.alpaca_order_id, o.symbol, o.direction, o.entry_price, o.shares, o.dollar_amount
@@ -2067,7 +2070,8 @@ app.post('/admin/repair-close-fills', (req, res) => {
     const run = db.transaction(() => {
       const usedOpen = new Set();
       for (const p of pairs) {
-        if (usedOpen.has(p.open_id)) continue;
+        if (usedOpen.has(p.open_id) || isOption(p.symbol)) continue;
+        if (onlyIds && !onlyIds.has(p.close_id)) continue;
         usedOpen.add(p.open_id);
         const isBull = p.direction === 'bull';
         const pnl = isBull ? (p.exit_price - p.entry_price) * p.shares : (p.entry_price - p.exit_price) * p.shares;
