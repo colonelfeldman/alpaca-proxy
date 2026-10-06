@@ -1257,6 +1257,28 @@ async function seedSeenOrders() {
   console.log(`Seeded ${seenOrderIds.size} existing filled orders (no notifications)`);
 }
 
+// Write P&L onto an open trade that was closed by a plain market/limit order
+// (EOD auto-close, Close All button, or a manual sell in Alpaca).
+function recordClosingFill(trade, order) {
+  const exitPrice = parseFloat(order.filled_avg_price || 0);
+  const qty       = parseFloat(order.filled_qty || order.qty || 0);
+  if (!exitPrice || !qty || !trade.entry_price) return;
+  const isBull = trade.direction === 'bull';
+  const pnl    = isBull ? (exitPrice - trade.entry_price) * qty : (trade.entry_price - exitPrice) * qty;
+  const pct    = trade.dollar_amount ? pnl / trade.dollar_amount * 100 : 0;
+  // If Close All ran within the last 10 minutes, this fill came from it
+  const fromCloseAll = lastCloseAll && Math.abs(new Date(order.filled_at || Date.now()).getTime() - lastCloseAll.at) < 10 * 60_000;
+  const exitReason = fromCloseAll ? (lastCloseAll.triggeredBy === 'auto' ? 'eod_close' : 'close_all') : 'manual_close';
+  const exitTimeET = order.filled_at
+    ? new Date(order.filled_at).toLocaleString('en-US', { timeZone: 'America/New_York' })
+    : nowETStr();
+  db.prepare(`
+    UPDATE trades SET total_pnl=?, total_pct=?, exit_reason=?, exit_time_et=?, status='closed'
+    WHERE alpaca_order_id=?
+  `).run(pnl, pct, exitReason, exitTimeET, trade.alpaca_order_id);
+  console.log(`[Close] ${trade.symbol} ${exitReason} @ $${exitPrice} P&L=$${pnl.toFixed(2)}`);
+}
+
 async function pollAccount(key, secret, label, opts = {}) {
   const baseUrl     = opts.baseUrl || ALPACA_BASE;
   const isLive      = opts.isLive  || false;
@@ -1353,7 +1375,21 @@ async function pollAccount(key, secret, label, opts = {}) {
             }
           }
         }
-        if (!isExitOrder) {
+        // A plain (non-bracket) order we didn't place ourselves that goes the opposite way of an
+        // open trade is that trade being closed — by EOD auto-close, Close All, or a manual sell
+        // in Alpaca. Record it as the exit instead of saving it as a new trade in the other direction.
+        const closesDirection = order.side === 'sell' ? 'bull' : 'bear';
+        const openTrade = (!isExitOrder && !meta && order.order_class !== 'bracket')
+          ? db.prepare(`
+              SELECT * FROM trades
+              WHERE symbol=? AND account=? AND COALESCE(environment,'paper')=? AND direction=?
+                AND status='filled' AND exit_reason IS NULL
+              ORDER BY created_at DESC LIMIT 1
+            `).get(order.symbol, accountName, env, closesDirection)
+          : null;
+        if (openTrade) {
+          recordClosingFill(openTrade, order);
+        } else if (!isExitOrder) {
           const direction  = (meta?.isBull !== undefined) ? (meta.isBull ? 'bull' : 'bear') : (order.side === 'buy' ? 'bull' : 'bear');
           const entryPrice = parseFloat(order.filled_avg_price || 0);
           const shares     = parseFloat(order.filled_qty || order.qty || 0);
@@ -1572,7 +1608,11 @@ async function syncPendingOrderStatuses() {
 
 // ── Close all positions ────────────────────────────────────────────────────────
 
+// Remembered so the poller can label the resulting sell fills as eod_close / close_all
+let lastCloseAll = null;
+
 async function closeAllPositions(triggeredBy = 'manual') {
+  lastCloseAll = { at: Date.now(), triggeredBy };
   const bullUseLive = process.env.BULL_USE_LIVE === 'true';
   const accounts = [
     !bullUseLive && { key: process.env.ALPACA_KEY,      secret: process.env.ALPACA_SECRET,      label: 'BULL', baseUrl: ALPACA_BASE,      isLive: false },
@@ -1997,6 +2037,57 @@ async function placeHeldTrades() {
     }
   }
 }
+
+// One-time cleanup for fills saved before recordClosingFill() existed: a "manual" row that is
+// really the close of an open trade (opposite direction, same symbol/account/env/day, same share
+// count, filled after the entry). Moves its price/P&L onto the original trade and deletes it.
+// POST with {"apply": true} to write; without it, only reports what would change.
+app.post('/admin/repair-close-fills', (req, res) => {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret && req.headers['x-webhook-secret'] !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const apply = req.body?.apply === true;
+    const pairs = db.prepare(`
+      SELECT c.id AS close_id, c.entry_price AS exit_price, c.entry_time_et AS exit_time_et, c.shares AS close_shares,
+             o.id AS open_id, o.alpaca_order_id, o.symbol, o.direction, o.entry_price, o.shares, o.dollar_amount
+      FROM trades c
+      JOIN trades o
+        ON o.symbol = c.symbol AND o.account = c.account
+       AND COALESCE(o.environment,'paper') = COALESCE(c.environment,'paper')
+       AND date(o.created_at) = date(c.created_at)
+       AND o.direction != c.direction AND o.shares = c.shares
+       AND o.created_at < c.created_at
+      WHERE c.order_mode = 'manual' AND c.exit_reason IS NULL
+        AND o.status = 'filled' AND o.exit_reason IS NULL
+      ORDER BY c.id
+    `).all();
+    const changes = [];
+    const run = db.transaction(() => {
+      const usedOpen = new Set();
+      for (const p of pairs) {
+        if (usedOpen.has(p.open_id)) continue;
+        usedOpen.add(p.open_id);
+        const isBull = p.direction === 'bull';
+        const pnl = isBull ? (p.exit_price - p.entry_price) * p.shares : (p.entry_price - p.exit_price) * p.shares;
+        const pct = p.dollar_amount ? pnl / p.dollar_amount * 100 : 0;
+        // Closes at 3:44 PM or later came from the EOD auto-close; anything earlier was a manual sell
+        const tm = /(\d+):(\d+):\d+\s*(AM|PM)/.exec(p.exit_time_et || '');
+        const mins = tm ? ((+tm[1] % 12) + (tm[3] === 'PM' ? 12 : 0)) * 60 + +tm[2] : 0;
+        const exitReason = mins >= 15 * 60 + 44 ? 'eod_close' : 'manual_close';
+        changes.push({ symbol: p.symbol, date: p.exit_time_et, openId: p.open_id, closeRowDeleted: p.close_id, entry: p.entry_price, exit: p.exit_price, pnl: +pnl.toFixed(2), exitReason });
+        if (apply) {
+          db.prepare(`UPDATE trades SET total_pnl=?, total_pct=?, exit_reason=?, exit_time_et=?, status='closed' WHERE id=?`)
+            .run(pnl, pct, exitReason, p.exit_time_et, p.open_id);
+          db.prepare(`DELETE FROM trades WHERE id=?`).run(p.close_id);
+        }
+      }
+    });
+    run();
+    res.json({ ok: true, applied: apply, changes });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // Manual override — runs the same held-trade placement logic as the 9:45 job, on demand.
 // For days the hold window is missed (e.g. setups added after 9:49) or for testing.
